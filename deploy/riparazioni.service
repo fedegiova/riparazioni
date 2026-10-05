@@ -1,0 +1,24 @@
+[Unit]
+Description=Riparazioni (Flask web application)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=riparazioni
+Group=riparazioni
+WorkingDirectory=/opt/riparazioni
+EnvironmentFile=/etc/riparazioni/riparazioni.env
+ExecStart=/opt/riparazioni/.venv/bin/gunicorn --workers 2 --bind 127.0.0.1:8000 --timeout 60 --access-logfile - --error-logfile - wsgi:app
+Restart=on-failure
+RestartSec=3
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/riparazioni/var
+
+[Install]
+WantedBy=multi-user.target

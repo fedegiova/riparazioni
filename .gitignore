@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Local environment (never commit real credentials)
+.env
+
+# Runtime-writable files (uploads, logs)
+var/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
