@@ -1,0 +1,11 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Documented development placeholders"
+regexTarget = "line"
+regexes = [
+  '''change-me-in-production''',
+  '''dev-only-secret-key''',
+  '''YourStrong%28Pass%29123''',
+]

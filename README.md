@@ -162,6 +162,74 @@ make db-upgrade                        # applies pending revisions
 .venv/bin/flask db migrate -m "msg"    # autogenerate a new revision (models changed)
 ```
 
+## Development notes (contributors and agents)
+
+### Setup and commands
+
+```bash
+make install-dev                 # create .venv and install runtime + dev deps
+make run                         # Flask dev server on http://127.0.0.1:5000
+make lint                        # Ruff (line length 100)
+make test                        # full pytest suite
+.venv/bin/pytest tests/test_api_repairs.py -q   # one module
+make db-migrate m="message"      # autogenerate a migration
+make db-upgrade                  # apply pending migrations
+```
+
+### Architecture boundaries
+
+- `app/routes/api/` handles HTTP concerns; business rules belong in
+  `app/services/`.
+- `app/models/owned.py` holds the migrated tables; `app/models/external.py`
+  maps the read-only legacy `DATIDBSTORICO` objects.
+- Migrations create only the seven owned tables and must never create or
+  alter `DATIDBSTORICO` objects (the `include_object` filter in
+  `migrations/env.py` enforces this).
+
+### Testing
+
+- Tests use in-memory SQLite plus the attached `DATIDBSTORICO` shim; they
+  never require a live MSSQL database.
+- Add or extend tests for every behavior change and keep the migration
+  round-trip test (`tests/test_migration.py`) passing.
+
+### OpenSpec SDD
+
+- Non-trivial work gets a folder under `openspec/changes/<name>/` with a
+  proposal, design, tasks, and delta specs.
+- Tooling/docs-only changes set `skip_specs: true` and have no `specs/`
+  directory.
+- Check off tasks and archive the change after implementation; durable
+  requirements live in `openspec/specs/`.
+- CI does not run the OpenSpec CLI; OpenSpec artifacts are reviewed in the
+  pull request.
+
+### CI and secret scanning
+
+- `.github/workflows/ci.yml` runs `Lint`, `Tests (Python 3.11)`, and
+  `Secret scan` on pushes and pull requests to `main`. `Secret scan` also
+  runs weekly and on manual dispatch to scan the full git history.
+- Reproduce the code checks locally with `make lint` and `make test`; no
+  MSSQL or ODBC setup is needed in CI.
+- Gitleaks scans the PR/push commit range on those events; the scheduled and
+  dispatched runs scan all history. Findings appear in the job log and
+  summary, and the action uploads a SARIF artifact.
+- The documented placeholders `change-me-in-production`,
+  `dev-only-secret-key`, and the sample MSSQL password in
+  `app/config.py`/`.env.example` are allowlisted in `.gitleaks.toml`. If a
+  real secret is ever committed, rotate it first, then clean history; do not
+  allowlist it.
+- There is no automated deployment; follow the production steps below.
+
+### API contract
+
+Keep `docs/openapi.yaml` in sync with `/api/v1` changes.
+
+### Security
+
+Never commit `.env` or real credentials; use `.env.example` for new
+settings.
+
 ## MSSQL smoke checklist (first deploy / after DB changes)
 
 The automated suite covers behavior on SQLite; run this against the real
