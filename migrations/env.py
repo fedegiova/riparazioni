@@ -4,6 +4,8 @@ from logging.config import fileConfig
 from alembic import context
 from flask import current_app
 
+import app.models  # noqa: F401  (register model tables on the metadata for autogenerate)
+
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
@@ -15,12 +17,8 @@ logger = logging.getLogger('alembic.env')
 
 
 def get_engine():
-    try:
-        # this works with Flask-SQLAlchemy<3 and Alchemical
-        return current_app.extensions['migrate'].db.get_engine()
-    except (TypeError, AttributeError):
-        # this works with Flask-SQLAlchemy>=3
-        return current_app.extensions['migrate'].db.engine
+    # Flask-SQLAlchemy>=3 / Flask-Migrate 4: plain `engine` attribute.
+    return current_app.extensions['migrate'].db.engine
 
 
 def get_engine_url():
@@ -50,6 +48,17 @@ def get_metadata():
     return target_db.metadata
 
 
+def include_object(object_, name, type_, reflected, compare_to):
+    """Keep autogenerate (and `db upgrade`) away from the legacy schema.
+
+    Tables in the ``DATIDBSTORICO`` schema are owned by the external system
+    (see openspec/specs/external_tables.md). They already exist on the real
+    database and must never be created or dropped by this app's migrations,
+    so autogenerate ignores them entirely.
+    """
+    return not (type_ == 'table' and getattr(object_, 'schema', None) == 'DATIDBSTORICO')
+
+
 def run_migrations_offline():
     """Run migrations in 'offline' mode.
 
@@ -64,7 +73,10 @@ def run_migrations_offline():
     """
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
-        url=url, target_metadata=get_metadata(), literal_binds=True
+        url=url,
+        target_metadata=get_metadata(),
+        literal_binds=True,
+        include_object=include_object,
     )
 
     with context.begin_transaction():
@@ -92,6 +104,7 @@ def run_migrations_online():
     conf_args = current_app.extensions['migrate'].configure_args
     if conf_args.get("process_revision_directives") is None:
         conf_args["process_revision_directives"] = process_revision_directives
+    conf_args.setdefault("include_object", include_object)
 
     connectable = get_engine()
 

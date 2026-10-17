@@ -1,0 +1,60 @@
+
+# This system has access to the following pre-existing tables on the SQL database
+
+
+## Table allestimenti (or vehicles)
+
+```sql
+create table DATIDBSTORICO.TBALLESTIMENTI (
+ID_INT 	      INT IDENTITY(1,1),
+ID              AS (RIGHT('000000000000000'+ CAST(ID_INT AS VARCHAR(15)),15)) PERSISTED,
+NOMINATIVO_ID   CHAR(15) NOT NULL,
+TARGA           CHAR(9), 
+AUTOCARRO       CHAR(25),
+CARROZZERIA     CHAR(20),
+MODELLO         CHAR(10),
+CLASSE          CHAR(7),
+COMMESSA        CHAR(10),
+PROD            DATE,
+ATP             DATE,
+PROGRESSIVO     INT,
+DATA_RILASCIO   DATE,
+OL              char(20),
+NOTE            VARCHAR(4000),
+CPCCCHK         char(10),
+)
+```
+
+## Table clienti ( or customers )
+
+```sql
+CREATE VIEW DATIDBSTORICO.VICLIENTI AS SELECT 
+    NOCODICE AS ID, 
+    NOCODICE AS N_NOMINATIVO, 
+    NODESCRI AS CLIENTE,
+    NOCODCLI AS NCLIENTE,
+    NOINDIRI AS VIA, 
+    NO___CAP AS CAP,
+    NOLOCALI AS CITTA,
+    NOPROVIN AS PROV,
+    NOTELEFO AS TEL,
+    NOTELFAX AS FAX,
+    NONUMCEL AS CELL,
+    NO_EMAIL AS EMAIL,
+    NO__NOTE AS NOTE
+FROM GIOPLOFF_NOMI
+```
+
+
+## Table users
+
+```sql
+CREATE TABLE DATIDBSTORICO.TBUSERS (
+ID_INT 	  INT IDENTITY(1,1),
+ID          AS (RIGHT('000000000000000'+ CAST(ID_INT AS VARCHAR(15)),15)) PERSISTED,
+NAME        CHAR(20) NOT NULL,
+PASSWORD    CHAR(40) NOT NULL,
+LAST_LOGIN  DATE,
+)
+```
+

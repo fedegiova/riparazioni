@@ -1,0 +1,1209 @@
+openapi: 3.0.3
+info:
+  title: Riparazioni API
+  version: 1.0.0
+  description: |
+    JSON REST API for the repair workflow (RIPA / RIPA FRIGO repairs), equipment
+    master data, photos, and read-only access to the legacy reference data in
+    the `DATIDBSTORICO` schema.
+
+    All endpoints are served under the `/api/v1` prefix.
+
+    ## Error model
+
+    Every error response uses the JSON envelope `{"error": "<message>"}`:
+
+    | Status | Meaning |
+    |--------|---------|
+    | 400 | Validation error (bad type, bad datetime, missing recharge pair, overdraw, ...) |
+    | 404 | Unknown resource id, or stored file missing on disk |
+    | 405 | Write method on a read-only resource |
+    | 409 | Referential conflict (unknown customer/vehicle/part/cylinder, or deleting a referenced record) |
+  contact:
+    name: riparazioni
+
+paths:
+  # ------------------------------------------------------------------
+  # Reference data (read-only, legacy DATIDBSTORICO)
+  # ------------------------------------------------------------------
+  /api/v1/vehicles:
+    get:
+      summary: List vehicles
+      description: Read-only view of the pre-existing `TBALLESTIMENTI` table. Other methods return 405.
+      tags: [reference-data]
+      responses:
+        "200":
+          description: List of vehicles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Vehicle"
+  /api/v1/vehicles/{vehicle_id}:
+    get:
+      summary: Get a vehicle
+      description: "Id is `TBALLESTIMENTI.ID_INT`."
+      tags: [reference-data]
+      parameters:
+        - $ref: "#/components/parameters/VehicleIdParam"
+      responses:
+        "200":
+          description: Vehicle
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Vehicle"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/customers:
+    get:
+      summary: List customers
+      description: Read-only view of the pre-existing `VICLIENTI` view. Other methods return 405.
+      tags: [reference-data]
+      responses:
+        "200":
+          description: List of customers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Customer"
+  /api/v1/customers/{customer_id}:
+    get:
+      summary: Get a customer
+      tags: [reference-data]
+      parameters:
+        - $ref: "#/components/parameters/CustomerIdParam"
+      responses:
+        "200":
+          description: Customer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Customer"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/users:
+    get:
+      summary: List users
+      description: Read-only view of the pre-existing `TBUSERS` table. The password is never exposed. Other methods return 405.
+      tags: [reference-data]
+      responses:
+        "200":
+          description: List of users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+  /api/v1/users/{user_id}:
+    get:
+      summary: Get a user
+      description: "Id is `TBUSERS.ID_INT`. The password field is never included."
+      tags: [reference-data]
+      parameters:
+        - $ref: "#/components/parameters/UserIdParam"
+      responses:
+        "200":
+          description: User
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ------------------------------------------------------------------
+  # Equipment (CRUD)
+  # ------------------------------------------------------------------
+  /api/v1/refrigerators:
+    get:
+      summary: List refrigerators
+      tags: [equipment]
+      responses:
+        "200":
+          description: List of refrigerators
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Refrigerator"
+    post:
+      summary: Create a refrigerator
+      tags: [equipment]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefrigeratorInput"
+      responses:
+        "201":
+          description: Created refrigerator
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Refrigerator"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /api/v1/refrigerators/{refrigerator_id}:
+    parameters:
+      - $ref: "#/components/parameters/RefrigeratorIdParam"
+    get:
+      summary: Get a refrigerator
+      tags: [equipment]
+      responses:
+        "200":
+          description: Refrigerator
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Refrigerator"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      summary: Update a refrigerator
+      description: Only the fields present in the body are changed.
+      tags: [equipment]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefrigeratorInput"
+      responses:
+        "200":
+          description: Updated refrigerator
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Refrigerator"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      summary: Delete a refrigerator
+      tags: [equipment]
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/gas-cylinders:
+    get:
+      summary: List gas cylinders
+      tags: [equipment]
+      responses:
+        "200":
+          description: List of gas cylinders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GasCylinder"
+    post:
+      summary: Create a gas cylinder
+      description: When `remaining_weight` is omitted it defaults to `full_weight` (a new cylinder starts full).
+      tags: [equipment]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GasCylinderInput"
+      responses:
+        "201":
+          description: Created gas cylinder
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GasCylinder"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /api/v1/gas-cylinders/{cylinder_id}:
+    parameters:
+      - $ref: "#/components/parameters/CylinderIdParam"
+    get:
+      summary: Get a gas cylinder
+      tags: [equipment]
+      responses:
+        "200":
+          description: Gas cylinder
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GasCylinder"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      summary: Update a gas cylinder
+      description: Only the fields present in the body are changed. `remaining_weight` may be adjusted manually here; recharge bookkeeping normally updates it.
+      tags: [equipment]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GasCylinderInput"
+      responses:
+        "200":
+          description: Updated gas cylinder
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GasCylinder"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      summary: Delete a gas cylinder
+      tags: [equipment]
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/service-parts:
+    get:
+      summary: List service parts
+      tags: [equipment]
+      parameters:
+        - name: is_refrigerator_part
+          in: query
+          required: false
+          description: Filter on the refrigerator-part flag
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: List of service parts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ServicePart"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+    post:
+      summary: Create a service part
+      tags: [equipment]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ServicePartInput"
+      responses:
+        "201":
+          description: Created service part
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServicePart"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /api/v1/service-parts/{part_id}:
+    parameters:
+      - $ref: "#/components/parameters/PartIdParam"
+    get:
+      summary: Get a service part
+      tags: [equipment]
+      responses:
+        "200":
+          description: Service part
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServicePart"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      summary: Update a service part
+      description: Only the fields present in the body are changed.
+      tags: [equipment]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ServicePartInput"
+      responses:
+        "200":
+          description: Updated service part
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServicePart"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      summary: Delete a service part
+      tags: [equipment]
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  # ------------------------------------------------------------------
+  # Pictures
+  # ------------------------------------------------------------------
+  /api/v1/pictures:
+    get:
+      summary: List pictures
+      tags: [pictures]
+      responses:
+        "200":
+          description: List of picture metadata
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Picture"
+    post:
+      summary: Upload a picture
+      description: |
+        Multipart upload. The file is stored under `UPLOAD_DIR/pictures/<uuid-hex><ext>`
+        and the `path` field records the location relative to `UPLOAD_DIR`.
+      tags: [pictures]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: The image file (extension is preserved)
+                uploaded_by:
+                  type: string
+                  description: Optional author name stored in the metadata
+      responses:
+        "201":
+          description: Created picture
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Picture"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /api/v1/pictures/{picture_id}:
+    parameters:
+      - $ref: "#/components/parameters/PictureIdParam"
+    get:
+      summary: Get picture metadata
+      tags: [pictures]
+      responses:
+        "200":
+          description: Picture metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Picture"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      summary: Delete a picture
+      description: Removes both the metadata record and the stored file.
+      tags: [pictures]
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/pictures/{picture_id}/file:
+    get:
+      summary: Download the stored file
+      description: Serves the file with a content type derived from its extension. The location is resolved only from the stored metadata (path traversal is not possible).
+      tags: [pictures]
+      parameters:
+        - $ref: "#/components/parameters/PictureIdParam"
+      responses:
+        "200":
+          description: File content
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ------------------------------------------------------------------
+  # Repairs
+  # ------------------------------------------------------------------
+  /api/v1/repairs:
+    get:
+      summary: List repairs
+      description: Summary form (no `work_log` / `parts`). Use the detail endpoint for those.
+      tags: [repairs]
+      parameters:
+        - name: customer
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: vehicle
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: refrigerator
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [RIPA, RIPA_FRIGO]
+        - name: start_date_from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: start_date_to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: List of repairs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Repair"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+    post:
+      summary: Create a repair
+      description: |
+        `type` is required. `customer` and `vehicle` are validated against the legacy
+        reference data (409 when unknown). `start_data` defaults to the current time
+        when omitted.
+      tags: [repairs]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RepairCreate"
+      responses:
+        "201":
+          description: Created repair (with empty `work_log` and `parts`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RepairDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/repairs/{repair_id}:
+    parameters:
+      - $ref: "#/components/parameters/RepairIdParam"
+    get:
+      summary: Get a repair (detail)
+      description: Includes the repair's `work_log` entries and associated `parts`.
+      tags: [repairs]
+      responses:
+        "200":
+          description: Repair detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RepairDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      summary: Update a repair
+      description: |
+        Only the fields present in the body are changed. Setting `end_data` marks the
+        repair completed; setting it to `null` reopens it. Providing `parts` replaces
+        the full part set.
+      tags: [repairs]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RepairUpdate"
+      responses:
+        "200":
+          description: Updated repair detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RepairDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    delete:
+      summary: Delete a repair
+      description: |
+        Removes the repair together with its work-log entries and part associations.
+        Cylinder balances recorded on its recharges are restored in the same transaction.
+      tags: [repairs]
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ------------------------------------------------------------------
+  # Work log (nested under a repair)
+  # ------------------------------------------------------------------
+  /api/v1/repairs/{repair_id}/work-log:
+    get:
+      summary: List work-log entries
+      tags: [work-log]
+      parameters:
+        - $ref: "#/components/parameters/RepairIdParam"
+      responses:
+        "200":
+          description: Work-log entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WorkLogEntry"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      summary: Add a work-log entry
+      description: |
+        Gas recharge rules:
+
+        - a recharge needs both `gas_recharge` (cylinder id) and `gas_recharge_weight`;
+          one without the other is rejected (400);
+        - for `RIPA_FRIGO` repairs an entry carrying gas data needs a `gas_system_state`;
+        - `PIENO` entries must not carry cylinder or weight data;
+        - the cylinder's `remaining_weight` is decreased by the recharged weight in the
+          same transaction;
+        - recharging more than the cylinder's remaining weight is rejected (400) and
+          leaves the balance unchanged;
+        - an unknown cylinder id is rejected (409).
+      tags: [work-log]
+      parameters:
+        - $ref: "#/components/parameters/RepairIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkLogInput"
+      responses:
+        "201":
+          description: Created work-log entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkLogEntry"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/repairs/{repair_id}/work-log/{entry_id}:
+    parameters:
+      - $ref: "#/components/parameters/RepairIdParam"
+      - name: entry_id
+        in: path
+        required: true
+        schema:
+          type: integer
+    put:
+      summary: Update a work-log entry
+      description: |
+        Non-gas fields are patched individually. When any gas field is present, the
+        entry's whole gas dataset is replaced: the previous balance impact is reverted
+        and the new one applied (validated first).
+      tags: [work-log]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkLogInput"
+      responses:
+        "200":
+          description: Updated work-log entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkLogEntry"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    delete:
+      summary: Delete a work-log entry
+      description: Restores the cylinder balance when the entry recorded a recharge.
+      tags: [work-log]
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+  parameters:
+    VehicleIdParam:
+      name: vehicle_id
+      in: path
+      required: true
+      schema:
+        type: integer
+    CustomerIdParam:
+      name: customer_id
+      in: path
+      required: true
+      schema:
+        type: integer
+    UserIdParam:
+      name: user_id
+      in: path
+      required: true
+      schema:
+        type: integer
+    RefrigeratorIdParam:
+      name: refrigerator_id
+      in: path
+      required: true
+      schema:
+        type: integer
+    CylinderIdParam:
+      name: cylinder_id
+      in: path
+      required: true
+      schema:
+        type: integer
+    PartIdParam:
+      name: part_id
+      in: path
+      required: true
+      schema:
+        type: integer
+    PictureIdParam:
+      name: picture_id
+      in: path
+      required: true
+      schema:
+        type: integer
+    RepairIdParam:
+      name: repair_id
+      in: path
+      required: true
+      schema:
+        type: integer
+    EntryIdParam:
+      name: entry_id
+      in: path
+      required: true
+      schema:
+        type: integer
+
+  responses:
+    BadRequest:
+      description: Validation error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Unknown resource
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: Referential conflict (unknown reference, or record still referenced)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          example: customer 99999 does not exist
+
+    # --- reference data (read-only) -------------------------------------
+    Vehicle:
+      type: object
+      readOnly: true
+      required: [id]
+      properties:
+        id:
+          type: integer
+          description: TBALLESTIMENTI.ID_INT
+        id_str:
+          type: string
+          description: Zero-padded legacy id
+        nominativo_id:
+          type: string
+        targa:
+          type: string
+          description: License plate
+        autocarro:
+          type: string
+        carrozzeria:
+          type: string
+        modello:
+          type: string
+        classe:
+          type: string
+        commessa:
+          type: string
+        prod:
+          type: string
+          format: date
+        atp:
+          type: string
+          format: date
+        progressivo:
+          type: integer
+        data_rilascio:
+          type: string
+          format: date
+        ol:
+          type: string
+        note:
+          type: string
+        cpccchk:
+          type: string
+    Customer:
+      type: object
+      readOnly: true
+      required: [id]
+      properties:
+        id:
+          type: integer
+        n_nominativo:
+          type: integer
+        cliente:
+          type: string
+          description: Customer name
+        ncliente:
+          type: string
+        via:
+          type: string
+        cap:
+          type: string
+        citta:
+          type: string
+        prov:
+          type: string
+        tel:
+          type: string
+        fax:
+          type: string
+        cell:
+          type: string
+        email:
+          type: string
+        note:
+          type: string
+    User:
+      type: object
+      readOnly: true
+      required: [id]
+      properties:
+        id:
+          type: integer
+          description: TBUSERS.ID_INT
+        id_str:
+          type: string
+        name:
+          type: string
+        last_login:
+          type: string
+          format: date
+
+    # --- equipment ---------------------------------------------------------
+    Refrigerator:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: integer
+        serial_nr:
+          type: string
+          maxLength: 32
+        model:
+          type: string
+          maxLength: 32
+        brand:
+          type: string
+          maxLength: 32
+        gas_kg:
+          type: number
+        notes:
+          type: string
+          maxLength: 4000
+    RefrigeratorInput:
+      type: object
+      properties:
+        serial_nr:
+          type: string
+        model:
+          type: string
+        brand:
+          type: string
+        gas_kg:
+          type: number
+        notes:
+          type: string
+    GasCylinder:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: integer
+        gas_kind:
+          type: string
+          maxLength: 32
+          example: R134a
+        serial_nr:
+          type: string
+          maxLength: 32
+        model:
+          type: string
+          maxLength: 32
+        full_weight:
+          type: number
+        remaining_weight:
+          type: number
+        picture_ref:
+          type: integer
+          nullable: true
+          description: Reference to a picture id
+        notes:
+          type: string
+          maxLength: 4000
+    GasCylinderInput:
+      type: object
+      properties:
+        gas_kind:
+          type: string
+        serial_nr:
+          type: string
+        model:
+          type: string
+        full_weight:
+          type: number
+        remaining_weight:
+          type: number
+          description: Defaults to full_weight on create when omitted
+        picture_ref:
+          type: integer
+          nullable: true
+        notes:
+          type: string
+    ServicePart:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+          maxLength: 64
+        supplier:
+          type: string
+          maxLength: 64
+        kind:
+          type: string
+          maxLength: 64
+        price:
+          type: integer
+        is_refrigerator_part:
+          type: boolean
+        picture_ref:
+          type: integer
+          nullable: true
+          description: Reference to a picture id
+        notes:
+          type: string
+          maxLength: 4000
+    ServicePartInput:
+      type: object
+      properties:
+        name:
+          type: string
+        supplier:
+          type: string
+        kind:
+          type: string
+        price:
+          type: integer
+        is_refrigerator_part:
+          type: boolean
+        picture_ref:
+          type: integer
+          nullable: true
+        notes:
+          type: string
+
+    # --- pictures ------------------------------------------------------------
+    Picture:
+      type: object
+      required: [id, path]
+      properties:
+        id:
+          type: integer
+        path:
+          type: string
+          description: File location relative to UPLOAD_DIR (e.g. pictures/ab12cd.jpg)
+        uploaded_by:
+          type: string
+          nullable: true
+        uploaded_date:
+          type: string
+          format: date-time
+
+    # --- repairs ---------------------------------------------------------------
+    RepairPartRef:
+      type: object
+      description: A part association as accepted in create/update requests
+      required: [id_part, quantity]
+      properties:
+        id_part:
+          type: integer
+          description: SERVICE_PARTS id
+        quantity:
+          type: integer
+          minimum: 1
+        unit_price:
+          type: integer
+          nullable: true
+          description: Unit price at time of use; falls back to the part's price when omitted
+    RepairPart:
+      type: object
+      readOnly: true
+      required: [id, id_part, quantity]
+      properties:
+        id:
+          type: integer
+        id_part:
+          type: integer
+        quantity:
+          type: integer
+        unit_price:
+          type: integer
+          nullable: true
+        part:
+          $ref: "#/components/schemas/ServicePart"
+    Repair:
+      type: object
+      required: [id, type, start_data]
+      properties:
+        id:
+          type: integer
+        customer:
+          type: integer
+          nullable: true
+          description: VICLIENTI id
+        vehicle:
+          type: integer
+          nullable: true
+          description: TBALLESTIMENTI.ID_INT
+        type:
+          type: string
+          enum: [RIPA, RIPA_FRIGO]
+        refrigerator:
+          type: integer
+          nullable: true
+        start_data:
+          type: string
+          format: date-time
+        end_data:
+          type: string
+          format: date-time
+          nullable: true
+          description: null while the repair is open
+        notes:
+          type: string
+          maxLength: 4000
+    RepairDetail:
+      allOf:
+        - $ref: "#/components/schemas/Repair"
+        - type: object
+          properties:
+            work_log:
+              type: array
+              items:
+                $ref: "#/components/schemas/WorkLogEntry"
+            parts:
+              type: array
+              items:
+                $ref: "#/components/schemas/RepairPart"
+    RepairCreate:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [RIPA, RIPA_FRIGO]
+        customer:
+          type: integer
+          description: Must exist in the customers reference data (409 otherwise)
+        vehicle:
+          type: integer
+          description: Must exist in the vehicles reference data (409 otherwise)
+        refrigerator:
+          type: integer
+          nullable: true
+        start_data:
+          type: string
+          format: date-time
+          description: Defaults to the current time when omitted
+        notes:
+          type: string
+        parts:
+          type: array
+          items:
+            $ref: "#/components/schemas/RepairPartRef"
+    RepairUpdate:
+      type: object
+      description: "Partial update: only the fields present are changed"
+      properties:
+        type:
+          type: string
+          enum: [RIPA, RIPA_FRIGO]
+        customer:
+          type: integer
+        vehicle:
+          type: integer
+        refrigerator:
+          type: integer
+          nullable: true
+        notes:
+          type: string
+        end_data:
+          type: string
+          format: date-time
+          nullable: true
+          description: Set to complete the repair, null to reopen it
+        parts:
+          type: array
+          description: When present, replaces the full part set
+          items:
+            $ref: "#/components/schemas/RepairPartRef"
+
+    # --- work log -----------------------------------------------------------------
+    WorkLogEntry:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: integer
+        start_time:
+          type: string
+          format: date-time
+          nullable: true
+        end_time:
+          type: string
+          format: date-time
+          nullable: true
+        operator:
+          type: string
+          maxLength: 32
+          nullable: true
+        gas_system_state:
+          type: string
+          enum: [VUOTO, PIENO, RICUPERO_RICARICA]
+          nullable: true
+          description: Gas system state of the operation
+        gas_recharge:
+          type: integer
+          nullable: true
+          description: Cylinder id used for the recharge
+        gas_recharge_weight:
+          type: number
+          nullable: true
+          description: Kg of gas recharged
+        gas_recovered_weight:
+          type: number
+          nullable: true
+          description: Kg of gas recovered (recorded only, does not move any balance)
+    WorkLogInput:
+      type: object
+      description: |
+        Work-log fields. For POST all fields are optional. For PUT, if any gas field
+        is present the whole gas dataset (state, cylinder, weights) is replaced.
+      properties:
+        start_time:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+        operator:
+          type: string
+          maxLength: 32
+        gas_system_state:
+          type: string
+          enum: [VUOTO, PIENO, RICUPERO_RICARICA]
+          nullable: true
+        gas_recharge:
+          type: integer
+          nullable: true
+        gas_recharge_weight:
+          type: number
+          nullable: true
+        gas_recovered_weight:
+          type: number
+          nullable: true
+
+tags:
+  - name: reference-data
+    description: Read-only access to the legacy DATIDBSTORICO objects
+  - name: equipment
+    description: CRUD for owned master data (refrigerators, gas cylinders, service parts)
+  - name: pictures
+    description: Photo file storage and delivery
+  - name: repairs
+    description: Repair lifecycle (RIPA / RIPA FRIGO)
+  - name: work-log
+    description: Work-log entries nested under a repair, with gas-recharge bookkeeping

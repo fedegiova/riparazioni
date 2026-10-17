@@ -66,12 +66,18 @@ must reference it read-only. See proposal.md for motivation.
 6. **JSON error envelope `{"error": "..."}`** with 400 (validation),
    404 (unknown ID / missing file), 405 (writes to read-only resources),
    409 (FK violations, mapped from `SQLAlchemyIntegrityError`).
-7. **Tests on in-memory SQLite with faked external tables**: a
-   `before_cursor_execute` listener rewrites the `DATIDBSTORICO.` schema
-   prefix (SQLite has no schemas) and a connect event enables
-   `PRAGMA foreign_keys=ON` so FK→409 scenarios behave like MSSQL. Identity
-   columns work on SQLite. The MSSQL-specific surface (ODBC driver, real
-   legacy tables) is covered by a manual smoke task, not the unit suite.
+7. **Tests on in-memory SQLite with an attached `DATIDBSTORICO`
+   database**: a `connect` event listener runs `ATTACH DATABASE
+   ':memory:' AS DATIDBSTORICO` so the external tables'
+   `schema="DATIDBSTORICO"` mappings resolve to real tables (SQLite
+   supports attached databases as schema names — no statement rewriting
+   needed), and `PRAGMA foreign_keys=ON` so FK→409 scenarios behave like
+   MSSQL for same-database FKs. Caveat: SQLite does not enforce FKs that
+   cross attached databases, so the owned→external FKs (customer,
+   vehicle) are validated in the service layer — which is also how they
+   are enforced in production (MSSQL forbids FKs to views). The
+   MSSQL-specific surface (ODBC driver, real legacy tables) is covered by
+   a manual smoke task, not the unit suite.
 
 ## Risks / Trade-offs
 
