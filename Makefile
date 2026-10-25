@@ -3,7 +3,7 @@ VENV ?= .venv
 BIN := $(VENV)/bin
 FLASK := FLASK_APP=wsgi.py $(BIN)/flask
 
-.PHONY: venv install install-dev run test lint db-migrate db-upgrade
+.PHONY: venv install install-dev run test lint db-migrate db-upgrade web-dev
 
 venv:
 	$(PY) -m venv $(VENV)
@@ -24,6 +24,9 @@ test:
 
 lint:
 	$(BIN)/ruff check .
+
+web-dev:
+	cd frontend; npm run dev
 
 db-migrate:
 	$(FLASK) db migrate -m "$(m)"
