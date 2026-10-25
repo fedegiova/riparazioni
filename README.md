@@ -31,6 +31,7 @@ riparazioni/
 │   └── static/
 ├── migrations/            # Alembic migrations (flask-migrate)
 ├── tests/                 # pytest suite (runs without MSSQL)
+├── dev/                   # dev mode: prebaked seed for the external tables
 ├── var/                   # runtime-writable: uploads/, log/  (gitignored)
 ├── deploy/
 │   ├── riparazioni.service   # systemd unit
@@ -51,6 +52,39 @@ cp .env.example .env             # then edit DATABASE_URL for your MSSQL
 sudo bash deploy/install-mssql-odbc.sh   # ODBC driver (also for local dev)
 make run                         # flask run on http://127.0.0.1:5000
 ```
+
+## Development without MSSQL (dev mode)
+
+No MSSQL server, no ODBC driver: with `DEV_MODE=1` the backend runs on two
+local SQLite files — `var/dev.sqlite3` (owned tables, Alembic-managed) and
+`var/dev_external.sqlite3` (the legacy `DATIDBSTORICO` reference tables).
+
+```bash
+make dev          # flask dev-init + flask run on http://127.0.0.1:5000
+```
+
+`flask dev-init` is idempotent: it applies the migrations, creates the
+external tables, and seeds them from `dev/seed_external.sql` when they are
+empty. The prebaked data (derived from the `clienti.sql` sample) contains
+one customer ("PP.", id 9), one vehicle (IVECO 130E18, id 12363) and one
+user ("LORENZA", id 21), so the reference endpoints and repair creation
+work immediately.
+
+```bash
+make dev-init                          # initialize (or no-op) the dev databases
+DEV_MODE=1 .venv/bin/flask dev-init --reset    # wipe ALL dev data, recreate + reseed
+```
+
+`--reset` drops every owned table (recreated empty at the current migration)
+and reseeds the external tables. Files uploaded to `var/uploads` are kept.
+
+Customize the reference data by editing `dev/seed_external.sql` (same
+statement shape: INSERTs into the `DATIDBSTORICO.*` tables), or point
+`DEV_SEED_SQL` at your own SQL file; run `flask dev-init --reset` (with
+`DEV_MODE=1`) to apply.
+
+Dev mode only affects `FLASK_ENV=development`. The MSSQL-based dev flow
+(`make run`), the test suite, and production are unchanged.
 
 ## API
 
@@ -281,6 +315,10 @@ environment file):
 | `UPLOAD_DIR` | `<BASE_DIR>/var/uploads` | Where the app writes uploaded files |
 | `LOG_DIR` | `<BASE_DIR>/var/log` | Where `app.log` is written |
 | `TEST_DATABASE_URL` | `sqlite://` | Test-suite database override |
+| `DEV_MODE` | `0` | Dev-mode switch (development only): run the backend on local SQLite instead of MSSQL; when on, `DATABASE_URL` is ignored |
+| `DEV_DATABASE_URL` | `<BASE_DIR>/var/dev.sqlite3` | Dev-mode primary database (full `sqlite:` URL) |
+| `DEV_EXTERNAL_DATABASE_URL` | sibling of the primary with an `_external` suffix | Dev-mode external `DATIDBSTORICO` database (full `sqlite:` URL) |
+| `DEV_SEED_SQL` | `dev/seed_external.sql` | Seed SQL file for the external tables (apply with `flask dev-init --reset`) |
 
 URL-encode special characters in the MSSQL password (`%` → `%25`, etc.).
 

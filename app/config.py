@@ -53,7 +53,20 @@ class BaseConfig:
 
 
 class DevelopmentConfig(BaseConfig):
-    """Local development (``flask run``)."""
+    """Local development (``flask run``).
+
+    ``DEV_MODE`` (opt-in, off by default) switches the database to local
+    SQLite files instead of MSSQL. When off, every ``DEV_*`` setting below
+    is ignored. The resolution rules live in ``app/dev_db.py``; see the
+    README section "Development without MSSQL (dev mode)".
+    """
+
+    DEV_MODE = _bool("DEV_MODE", False)
+    # All resolved at setup time (``setup_dev_mode``); defaults mean
+    # "use the standard var/dev*.sqlite3 locations under BASE_DIR".
+    DEV_DATABASE_URL = _env("DEV_DATABASE_URL")
+    DEV_EXTERNAL_DATABASE_URL = _env("DEV_EXTERNAL_DATABASE_URL")
+    DEV_SEED_SQL = _env("DEV_SEED_SQL")
 
 
 class TestingConfig(BaseConfig):

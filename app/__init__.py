@@ -17,6 +17,7 @@ from flask import Flask
 load_dotenv()
 
 from app import config as config_module
+from app.dev_db import dev_init_command, install_dev_engine_hooks, setup_dev_mode
 from app.extensions import db, migrate
 from app.routes import register_blueprints
 
@@ -39,9 +40,23 @@ def create_app(config_name: str | None = None) -> Flask:
     app = Flask(__name__)
     app.config.from_object(config_obj)
 
+    if app.config.get("DEV_MODE"):
+        # Dev mode (development config only): switch to the local SQLite
+        # dev databases. The flag is read from the final app config so
+        # test-time config overrides work like in tests/conftest.py.
+        # Phase 1 must precede db.init_app: Flask-SQLAlchemy creates the
+        # engine there, eagerly, from the config at that moment.
+        setup_dev_mode(app)
+
     db.init_app(app)
+    if app.config.get("DEV_MODE"):
+        # Phase 2: the engine exists now — attach the DATIDBSTORICO
+        # database and enable FKs on every connection.
+        with app.app_context():
+            install_dev_engine_hooks(app)
     migrate.init_app(app, db)
     register_blueprints(app)
+    app.cli.add_command(dev_init_command)
 
     if not app.testing:
         _ensure_var_directories(app)

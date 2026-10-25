@@ -27,9 +27,19 @@ lint:
 
 web-dev:
 	cd frontend; npm run dev
+web-test:
+	cd frontend; npm test
+
+test: backend-test web-test
 
 db-migrate:
 	$(FLASK) db migrate -m "$(m)"
 
 db-upgrade:
 	$(FLASK) db upgrade
+
+dev-init:
+	DEV_MODE=1 $(BIN)/flask dev-init
+
+dev: dev-init
+	DEV_MODE=1 FLASK_DEBUG=1 $(FLASK) run
