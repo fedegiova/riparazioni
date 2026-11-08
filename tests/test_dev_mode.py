@@ -391,14 +391,14 @@ def test_dev_mode_repairs_against_seeded_reference_data(tmp_path, monkeypatch):
 
     created = client.post(
         "/api/v1/repairs",
-        json={"type": "RIPA", "customer": 9, "vehicle": 12363},
+        json={"customer": 9, "vehicle": 12363},
     )
     assert created.status_code == 201
     assert created.get_json()["customer"] == 9
     assert created.get_json()["vehicle"] == 12363
 
     rejected = client.post(
-        "/api/v1/repairs", json={"type": "RIPA", "customer": 999}
+        "/api/v1/repairs", json={"customer": 999}
     )
     assert rejected.status_code == 409
 
@@ -417,7 +417,7 @@ def test_dev_mode_error_semantics_unchanged(tmp_path, monkeypatch):
     fridge_id = fridge.get_json()["id"]
     repair = client.post(
         "/api/v1/repairs",
-        json={"type": "RIPA", "customer": 9, "refrigerator": fridge_id},
+        json={"customer": 9, "refrigerator": fridge_id},
     )
     assert repair.status_code == 201
 

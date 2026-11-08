@@ -1,12 +1,14 @@
 """Repair business logic (task group 5).
 
 Owns the validation rules that the database cannot express:
-- repair type must be RIPA or RIPA_FRIGO,
 - customer/vehicle must exist in the legacy reference data (no DB FK,
   because VICLIENTI is a view and the migration must not touch
   DATIDBSTORICO),
 - gas-recharge bookkeeping: a recharge decreases the cylinder's remaining
   weight in the same transaction; deleting the entry restores it.
+
+Read-time computed fields (`total_hours`, `customer_name`) are attached to
+the repair instances before serialization; they are never stored.
 
 Every mutating function follows validate-first semantics: all checks run
 (read-only) before the session is touched, so a rejected request (400/409)
@@ -14,10 +16,13 @@ never leaves partially mutated state behind. Functions do NOT commit — the
 route commits, keeping related writes in one transaction.
 """
 
+from io import BytesIO
+
+from openpyxl import Workbook
+
 from app.extensions import db
 from app.models import (
     GAS_SYSTEM_STATES,
-    REPAIR_TYPES,
     Customer,
     GasCylinder,
     RepairPart,
@@ -45,10 +50,21 @@ def _parse_datetime(value, name: str):
     raise BadRequest(f"{name} must be an ISO 8601 datetime")
 
 
-def _validate_type(value) -> str:
-    if value not in REPAIR_TYPES:
-        raise BadRequest(f"type must be one of {', '.join(REPAIR_TYPES)}, got {value!r}")
-    return value
+def _parse_date(value, name: str):
+    if value in (None, ""):
+        return None
+    from datetime import date, datetime
+
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value)
+        except ValueError:
+            raise BadRequest(f"{name} must be an ISO 8601 date") from None
+    raise BadRequest(f"{name} must be an ISO 8601 date")
 
 
 def _validate_external_reference(model, item_id, name: str) -> None:
@@ -83,9 +99,7 @@ def _validate_parts_payload(raw_parts) -> list[dict]:
 
 
 def _validate_repair_payload(data: dict) -> None:
-    """All read-only checks for create/update (type, external refs, parts)."""
-    if "type" in data and data["type"] is not None:
-        _validate_type(data["type"])
+    """All read-only checks for create/update (external refs, parts)."""
     if "customer" in data:
         _validate_external_reference(Customer, data["customer"], "customer")
     if "vehicle" in data:
@@ -108,7 +122,7 @@ def _parse_work_log_gas(data: dict) -> dict:
     }
 
 
-def _validate_gas(repair: Repairs, entry, state, cylinder_id, weight, recovered) -> None:
+def _validate_gas(entry, state, cylinder_id, weight, recovered) -> None:
     """Read-only validation of a gas dataset.
 
     *entry* is the existing entry being updated, or None for a new one.
@@ -128,10 +142,9 @@ def _validate_gas(repair: Repairs, entry, state, cylinder_id, weight, recovered)
     if state == "PIENO" and (has_cylinder or has_weight or recovered is not None):
         raise BadRequest("PIENO entries must not carry cylinder or weight data")
 
-    if repair.type == "RIPA_FRIGO" and state is None and (
-        has_cylinder or recovered is not None
-    ):
-        raise BadRequest("RIPA_FRIGO entries with gas data require a gas_system_state")
+    # Any entry carrying gas data must declare the system state.
+    if state is None and (has_cylinder or recovered is not None):
+        raise BadRequest("an entry carrying gas data requires a gas_system_state")
 
     if not has_cylinder:
         return
@@ -163,7 +176,7 @@ def _validate_gas(repair: Repairs, entry, state, cylinder_id, weight, recovered)
         )
 
 
-def _apply_gas(repair: Repairs, entry: RepairWorkLog, state, cylinder_id, weight, recovered) -> None:
+def _apply_gas(entry: RepairWorkLog, state, cylinder_id, weight, recovered) -> None:
     """Apply an already-validated gas dataset (mutation only)."""
     _restore_recharge(entry)
     entry.gas_system_state = state
@@ -184,12 +197,51 @@ def _restore_recharge(entry: RepairWorkLog) -> None:
         cylinder.remaining_weight = (cylinder.remaining_weight or 0.0) + entry.gas_recharge_weight
 
 
+# --- read-time computed fields ----------------------------------------------------
+
+def _duration_hours(entry: RepairWorkLog) -> float:
+    """Worked hours of one entry; entries missing a bound contribute zero."""
+    if entry.start_time is None or entry.end_time is None:
+        return 0.0
+    return (entry.end_time - entry.start_time).total_seconds() / 3600.0
+
+
+def _resolve_customer_names(customer_ids: set) -> dict:
+    """Look up customer names for the given ids (one query, no per-row lookup)."""
+    ids = {cid for cid in customer_ids if cid is not None}
+    if not ids:
+        return {}
+    rows = db.session.execute(
+        db.select(Customer).where(Customer.ID.in_(ids))
+    ).scalars()
+    return {customer.ID: customer.CLIENTE for customer in rows}
+
+
+def _decorate_repairs(repairs: list[Repairs]) -> None:
+    """Attach `total_hours` and `customer_name` to repairs before serialization.
+
+    A single query loads the work-log durations of every listed repair (no
+    per-repair query); customer names are resolved for the distinct ids in
+    one lookup. Unknown customer ids resolve to a null name.
+    """
+    ids = [repair.id for repair in repairs]
+    hours: dict[int, float] = {}
+    if ids:
+        entries = db.session.execute(
+            db.select(RepairWorkLog).where(RepairWorkLog.id_repairs.in_(ids))
+        ).scalars()
+        for entry in entries:
+            hours[entry.id_repairs] = hours.get(entry.id_repairs, 0.0) + _duration_hours(entry)
+    names = _resolve_customer_names({repair.customer for repair in repairs})
+    for repair in repairs:
+        repair.total_hours = hours.get(repair.id, 0.0)
+        repair.customer_name = names.get(repair.customer)
+
+
 # --- repair CRUD ------------------------------------------------------------------
 
 def _apply_repair_fields(repair: Repairs, data: dict) -> None:
     """Mutation-only; payload must already be validated."""
-    if "type" in data and data["type"] is not None:
-        repair.type = data["type"]
     if "customer" in data:
         repair.customer = data["customer"]
     if "vehicle" in data:
@@ -200,13 +252,13 @@ def _apply_repair_fields(repair: Repairs, data: dict) -> None:
         repair.notes = data["notes"]
     if "end_data" in data:
         repair.end_data = _parse_datetime(data["end_data"], "end_data")
+    if "delivery_date" in data:
+        repair.delivery_date = _parse_date(data["delivery_date"], "delivery_date")
     if "start_data" in data and data["start_data"] is not None:
         repair.start_data = _parse_datetime(data["start_data"], "start_data")
 
 
 def create_repair(data: dict) -> Repairs:
-    if "type" not in data:
-        raise BadRequest("type is required")
     _validate_repair_payload(data)
     parsed_parts = _validate_parts_payload(data.get("parts"))
 
@@ -216,6 +268,7 @@ def create_repair(data: dict) -> Repairs:
     db.session.flush()  # assign the id so part rows can reference it
     for item in parsed_parts:
         repair.parts.append(RepairPart(id_repairs=repair.id, **item))
+    _decorate_repairs([repair])
     return repair
 
 
@@ -223,6 +276,7 @@ def get_repair(item_id: int) -> Repairs:
     repair = db.session.get(Repairs, item_id)
     if repair is None:
         raise NotFound(f"repair {item_id} not found")
+    _decorate_repairs([repair])
     return repair
 
 
@@ -235,15 +289,15 @@ def list_repairs(params: dict) -> list[Repairs]:
     ):
         if params.get(param) not in (None, ""):
             query = query.where(column == int(params[param]))
-    if params.get("type"):
-        query = query.where(Repairs.type == params["type"])
     start_from = _parse_datetime(params.get("start_date_from"), "start_date_from")
     start_to = _parse_datetime(params.get("start_date_to"), "start_date_to")
     if start_from is not None:
         query = query.where(Repairs.start_data >= start_from)
     if start_to is not None:
         query = query.where(Repairs.start_data <= start_to)
-    return list(db.session.execute(query).scalars().all())
+    repairs = list(db.session.execute(query).scalars().all())
+    _decorate_repairs(repairs)
+    return repairs
 
 
 def update_repair(repair: Repairs, data: dict) -> Repairs:
@@ -256,6 +310,7 @@ def update_repair(repair: Repairs, data: dict) -> Repairs:
             db.session.delete(existing)
         for item in parsed_parts:
             repair.parts.append(RepairPart(id_repairs=repair.id, **item))
+    _decorate_repairs([repair])
     return repair
 
 
@@ -296,12 +351,11 @@ def _gas_fields_present(data: dict) -> bool:
 
 def add_work_log_entry(repair: Repairs, data: dict) -> RepairWorkLog:
     gas = _parse_work_log_gas(data)
-    _validate_gas(repair, None, gas["state"], gas["cylinder"], gas["weight"], gas["recovered"])
+    _validate_gas(None, gas["state"], gas["cylinder"], gas["weight"], gas["recovered"])
 
     entry = RepairWorkLog(id_repairs=repair.id)
     _apply_non_gas_fields(entry, data)
     _apply_gas(
-        repair,
         entry,
         gas["state"],
         gas["cylinder"],
@@ -320,18 +374,62 @@ def get_work_log_entry(repair: Repairs, entry_id: int) -> RepairWorkLog:
 
 
 def update_work_log_entry(entry: RepairWorkLog, data: dict) -> RepairWorkLog:
-    repair = entry.repair
     gas = _parse_work_log_gas(data) if _gas_fields_present(data) else None
     if gas is not None:
         # Read-only validation first, against the entry's current values.
-        _validate_gas(repair, entry, gas["state"], gas["cylinder"], gas["weight"], gas["recovered"])
+        _validate_gas(entry, gas["state"], gas["cylinder"], gas["weight"], gas["recovered"])
 
     _apply_non_gas_fields(entry, data)
     if gas is not None:
-        _apply_gas(repair, entry, gas["state"], gas["cylinder"], gas["weight"], gas["recovered"])
+        _apply_gas(entry, gas["state"], gas["cylinder"], gas["weight"], gas["recovered"])
     return entry
 
 
 def delete_work_log_entry(entry: RepairWorkLog) -> None:
     _restore_recharge(entry)
     db.session.delete(entry)
+
+
+# --- Excel export -----------------------------------------------------------------
+
+EXPORT_COLUMNS = (
+    "id",
+    "customer",
+    "customer_name",
+    "vehicle",
+    "refrigerator",
+    "start_data",
+    "end_data",
+    "delivery_date",
+    "total_hours",
+    "notes",
+)
+
+
+def export_repairs_xlsx(repairs: list[Repairs]) -> bytes:
+    """Render repairs (already filtered and decorated) as an .xlsx workbook.
+
+    Returns the workbook bytes; the route streams them as a download.
+    """
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Repairs"
+    sheet.append(list(EXPORT_COLUMNS))
+    for repair in repairs:
+        sheet.append(
+            [
+                repair.id,
+                repair.customer,
+                repair.customer_name,
+                repair.vehicle,
+                repair.refrigerator,
+                repair.start_data.isoformat() if repair.start_data else None,
+                repair.end_data.isoformat() if repair.end_data else None,
+                repair.delivery_date.isoformat() if repair.delivery_date else None,
+                repair.total_hours,
+                repair.notes,
+            ]
+        )
+    buffer = BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()

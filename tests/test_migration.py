@@ -56,6 +56,18 @@ def test_migration_upgrade_and_downgrade(tmp_path):
         fk_columns = {tuple(fk["constrained_columns"]) for fk in repairs_fks}
         assert fk_columns == {("refrigerator",)}, fk_columns
 
+        # Schema delta: delivery_date replaces the removed type column.
+        columns = {column["name"] for column in inspector.get_columns("REPAIRS")}
+        assert "delivery_date" in columns, columns
+        assert "type" not in columns, columns
+
+        # Rolling back one revision restores the pre-change shape.
+        command.downgrade(cfg, "051870300b7a")
+        inspector = sa.inspect(db.engine)
+        columns = {column["name"] for column in inspector.get_columns("REPAIRS")}
+        assert "type" in columns, columns
+        assert "delivery_date" not in columns, columns
+
         command.downgrade(cfg, "base")
 
         inspector = sa.inspect(db.engine)

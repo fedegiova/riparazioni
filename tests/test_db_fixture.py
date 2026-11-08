@@ -18,7 +18,7 @@ def test_external_seed_rows_readable(db):
 
 
 def test_repair_with_valid_external_fk_persists(db):
-    repair = Repairs(customer=1, vehicle=1, type="RIPA")
+    repair = Repairs(customer=1, vehicle=1)
     db.session.add(repair)
     db.session.commit()
     assert repair.id is not None

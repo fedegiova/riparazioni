@@ -9,14 +9,11 @@ operations that keep gas-cylinder balances current.
 ## Requirements
 
 ### Requirement: Create a repair
-The system SHALL allow creating a repair with customer, vehicle, type
-(RIPA or RIPA_FRIGO), optional refrigerator, notes, and start datetime.
-The start datetime SHALL default to the current time when omitted. The
-created record SHALL receive a sequential identifier.
+The system SHALL allow creating a repair with customer, vehicle, optional refrigerator, notes, start datetime, and an optional delivery date. The start datetime SHALL default to the current time when omitted. The created record SHALL receive a sequential identifier.
 
 #### Scenario: Create a RIPA FRIGO repair
-- **WHEN** a client POSTs to /api/v1/repairs with a valid customer ID, valid vehicle ID, type RIPA_FRIGO and a refrigerator ID
-- **THEN** the system responds with HTTP 201 and the created repair including its identifier and start datetime
+- **WHEN** a client POSTs to /api/v1/repairs with a valid customer ID, a valid vehicle ID, and a delivery date
+- **THEN** the system responds with HTTP 201 and the created repair including its identifier, start datetime, and delivery date
 
 #### Scenario: Start datetime defaults to now
 - **WHEN** a repair is created without a start datetime
@@ -26,23 +23,16 @@ created record SHALL receive a sequential identifier.
 - **WHEN** a repair is created with a customer ID that does not exist in the customers reference data
 - **THEN** the system responds with HTTP 409 and no repair is created
 
-### Requirement: Repair type
-The system SHALL store each repair's type as RIPA or RIPA_FRIGO and SHALL
-reject any other value on create or update.
-
-#### Scenario: Invalid type is rejected
-- **WHEN** a repair is created or updated with a type other than RIPA or RIPA_FRIGO
-- **THEN** the system responds with HTTP 400 with a validation error
-
 ### Requirement: Retrieve repairs
-The system SHALL return a list of repairs, filterable by customer,
-vehicle, refrigerator, type, and start-date range, and a single repair by
-ID. The single-repair response SHALL include its work-log entries and its
-associated parts.
+The system SHALL return a list of repairs, filterable by customer, vehicle, refrigerator, and a start-date range, and a single repair by ID. Each repair SHALL report the customer's resolved name and its total worked hours, computed as the sum of its work-log entry durations. The single-repair response SHALL additionally include its work-log entries and associated parts.
 
 #### Scenario: List all repairs
 - **WHEN** a client GETs /api/v1/repairs
-- **THEN** the system responds with HTTP 200 and a list of repair records
+- **THEN** the system responds with HTTP 200 and, for each repair, the customer name and total worked hours alongside the repair fields
+
+#### Scenario: Total hours sums work-log durations
+- **WHEN** a repair has work-log entries of 1h30 and 2h00
+- **THEN** the repair's total hours is 3h30
 
 #### Scenario: Filter by customer
 - **WHEN** a client GETs /api/v1/repairs?customer=<id>
@@ -57,9 +47,7 @@ associated parts.
 - **THEN** the system responds with HTTP 404
 
 ### Requirement: Update a repair
-The system SHALL allow updating a repair's customer, vehicle,
-refrigerator, type, notes, and end datetime. Setting the end datetime
-marks the repair completed; clearing it reopens the repair.
+The system SHALL allow updating a repair's customer, vehicle, refrigerator, notes, delivery date, and end datetime. Setting the end datetime marks the repair completed; clearing it reopens the repair.
 
 #### Scenario: Complete a repair
 - **WHEN** a client updates a repair with an end datetime
@@ -68,6 +56,10 @@ marks the repair completed; clearing it reopens the repair.
 #### Scenario: Reopen a completed repair
 - **WHEN** a client updates a completed repair with a null end datetime
 - **THEN** the repair's end datetime is cleared
+
+#### Scenario: Change the requested delivery date
+- **WHEN** a client updates a repair's delivery date
+- **THEN** the system responds with HTTP 200 and the new delivery date is stored
 
 ### Requirement: Delete a repair
 The system SHALL allow deleting a repair; its work-log entries and part
@@ -107,14 +99,7 @@ a repair, each with start time, end time, and operator.
 - **THEN** the system responds with HTTP 404
 
 ### Requirement: Gas recharge operations
-When a work-log entry records a gas recharge, the system SHALL require a
-cylinder reference and a recharged weight, and SHALL decrease that
-cylinder's remaining weight by the recharged amount in the same
-transaction. For RIPA_FRIGO repairs the entry SHALL also record the gas
-system state (VUOTO, PIENO, or RICUPERO_RICARICA); for RICUPERO_RICARICA
-the recovered weight SHALL be stored and SHALL NOT alter any cylinder
-balance. A recharged weight exceeding the cylinder's remaining weight
-SHALL be rejected.
+When a work-log entry carries gas data, the system SHALL require a gas system state (VUOTO, PIENO, or RICUPERO_RICARICA). When a work-log entry records a gas recharge, the system SHALL require a cylinder reference and a recharged weight, and SHALL decrease that cylinder's remaining weight by the recharged amount in the same transaction; for RICUPERO_RICARICA the recovered weight SHALL be stored and SHALL NOT alter any cylinder balance. A recharged weight exceeding the cylinder's remaining weight SHALL be rejected.
 
 #### Scenario: Recharge decreases cylinder balance
 - **WHEN** a work-log entry is created with state VUOTO, recharged weight 2.5, and a cylinder whose remaining weight is 10.0
@@ -127,6 +112,10 @@ SHALL be rejected.
 #### Scenario: Recovered weight is stored
 - **WHEN** a work-log entry is created with state RICUPERO_RICARICA, recovered weight 1.0 and recharged weight 2.5
 - **THEN** the entry stores both weights and the cylinder balance decreases only by the recharged amount
+
+#### Scenario: Gas data without a state is rejected
+- **WHEN** a work-log entry is created with a gas recharge but no gas system state
+- **THEN** the system responds with HTTP 400 and no entry is created
 
 #### Scenario: Overdraw is rejected
 - **WHEN** a recharge of 12.0 is recorded against a cylinder whose remaining weight is 10.0
@@ -143,3 +132,14 @@ cylinder's remaining weight by the recharged amount.
 #### Scenario: Balance is restored on delete
 - **WHEN** a work-log entry that recharged 2.5 from a cylinder is deleted
 - **THEN** the cylinder's remaining weight has increased by 2.5
+
+### Requirement: Export repairs as an Excel workbook
+The system SHALL provide a server-side export of repairs as a Microsoft Excel (`.xlsx`) file, honoring the same filters as the repairs list.
+
+#### Scenario: Export all repairs
+- **WHEN** a client GETs the repairs export endpoint
+- **THEN** the system responds with HTTP 200 and an .xlsx file containing one row per repair
+
+#### Scenario: Export honors filters
+- **WHEN** a client requests the export with a customer filter
+- **THEN** the file contains only that customer's repairs

@@ -1,6 +1,6 @@
 """End-to-end integration test (task 6.1).
 
-Walks the full RIPA FRIGO workflow over HTTP: create repair -> work-log
+Walks the full repair workflow over HTTP: create repair -> work-log
 entry with a gas recharge -> assert cylinder balance -> add a part ->
 complete the repair -> list filtered by customer.
 """
@@ -21,9 +21,9 @@ def test_ripa_frigo_full_workflow(client, db):
     # 1. Create the repair
     repair = client.post(
         "/api/v1/repairs",
-        json={"type": "RIPA_FRIGO", "customer": 1, "vehicle": 1, "refrigerator": None},
+        json={"customer": 1, "vehicle": 1, "refrigerator": None, "delivery_date": "2026-10-10"},
     ).get_json()
-    assert repair["type"] == "RIPA_FRIGO"
+    assert repair["delivery_date"] == "2026-10-10"
     assert repair["customer"] == 1
 
     # 2. Work-log entry with a gas recharge (impianto vuoto)

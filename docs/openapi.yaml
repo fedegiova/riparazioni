@@ -3,9 +3,8 @@ info:
   title: Riparazioni API
   version: 1.0.0
   description: |
-    JSON REST API for the repair workflow (RIPA / RIPA FRIGO repairs), equipment
-    master data, photos, and read-only access to the legacy reference data in
-    the `DATIDBSTORICO` schema.
+    JSON REST API for the repair workflow, equipment master data, photos, and
+    read-only access to the legacy reference data in the `DATIDBSTORICO` schema.
 
     All endpoints are served under the `/api/v1` prefix.
 
@@ -15,7 +14,7 @@ info:
 
     | Status | Meaning |
     |--------|---------|
-    | 400 | Validation error (bad type, bad datetime, missing recharge pair, overdraw, ...) |
+    | 400 | Validation error (bad date/datetime, missing recharge pair, overdraw, ...) |
     | 404 | Unknown resource id, or stored file missing on disk |
     | 405 | Write method on a read-only resource |
     | 409 | Referential conflict (unknown customer/vehicle/part/cylinder, or deleting a referenced record) |
@@ -475,12 +474,6 @@ paths:
           required: false
           schema:
             type: integer
-        - name: type
-          in: query
-          required: false
-          schema:
-            type: string
-            enum: [RIPA, RIPA_FRIGO]
         - name: start_date_from
           in: query
           required: false
@@ -507,9 +500,8 @@ paths:
     post:
       summary: Create a repair
       description: |
-        `type` is required. `customer` and `vehicle` are validated against the legacy
-        reference data (409 when unknown). `start_data` defaults to the current time
-        when omitted.
+        `customer` and `vehicle` are validated against the legacy reference data
+        (409 when unknown). `start_data` defaults to the current time when omitted.
       tags: [repairs]
       requestBody:
         required: true
@@ -528,6 +520,51 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/repairs/export:
+    get:
+      summary: Export repairs as an Excel workbook
+      description: |
+        Honors the same filters as the repairs list and returns a real `.xlsx`
+        workbook (one row per matching repair) as a download.
+      tags: [repairs]
+      parameters:
+        - name: customer
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: vehicle
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: refrigerator
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: start_date_from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: start_date_to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Excel workbook
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/BadRequest"
   /api/v1/repairs/{repair_id}:
     parameters:
       - $ref: "#/components/parameters/RepairIdParam"
@@ -609,7 +646,7 @@ paths:
 
         - a recharge needs both `gas_recharge` (cylinder id) and `gas_recharge_weight`;
           one without the other is rejected (400);
-        - for `RIPA_FRIGO` repairs an entry carrying gas data needs a `gas_system_state`;
+        - any entry carrying gas data needs a `gas_system_state`;
         - `PIENO` entries must not carry cylinder or weight data;
         - the cylinder's `remaining_weight` is decreased by the recharged weight in the
           same transaction;
@@ -1036,7 +1073,7 @@ components:
           $ref: "#/components/schemas/ServicePart"
     Repair:
       type: object
-      required: [id, type, start_data]
+      required: [id, start_data, customer_name, total_hours]
       properties:
         id:
           type: integer
@@ -1044,13 +1081,14 @@ components:
           type: integer
           nullable: true
           description: VICLIENTI id
+        customer_name:
+          type: string
+          nullable: true
+          description: Resolved from the customers reference data; null when unknown
         vehicle:
           type: integer
           nullable: true
           description: TBALLESTIMENTI.ID_INT
-        type:
-          type: string
-          enum: [RIPA, RIPA_FRIGO]
         refrigerator:
           type: integer
           nullable: true
@@ -1062,6 +1100,14 @@ components:
           format: date-time
           nullable: true
           description: null while the repair is open
+        delivery_date:
+          type: string
+          format: date
+          nullable: true
+          description: Delivery date requested by the customer
+        total_hours:
+          type: number
+          description: Sum of the repair's work-log durations, in hours
         notes:
           type: string
           maxLength: 4000
@@ -1080,11 +1126,7 @@ components:
                 $ref: "#/components/schemas/RepairPart"
     RepairCreate:
       type: object
-      required: [type]
       properties:
-        type:
-          type: string
-          enum: [RIPA, RIPA_FRIGO]
         customer:
           type: integer
           description: Must exist in the customers reference data (409 otherwise)
@@ -1098,6 +1140,11 @@ components:
           type: string
           format: date-time
           description: Defaults to the current time when omitted
+        delivery_date:
+          type: string
+          format: date
+          nullable: true
+          description: Delivery date requested by the customer
         notes:
           type: string
         parts:
@@ -1108,9 +1155,6 @@ components:
       type: object
       description: "Partial update: only the fields present are changed"
       properties:
-        type:
-          type: string
-          enum: [RIPA, RIPA_FRIGO]
         customer:
           type: integer
         vehicle:
@@ -1125,6 +1169,11 @@ components:
           format: date-time
           nullable: true
           description: Set to complete the repair, null to reopen it
+        delivery_date:
+          type: string
+          format: date
+          nullable: true
+          description: Delivery date requested by the customer (null clears it)
         parts:
           type: array
           description: When present, replaces the full part set
@@ -1204,6 +1253,6 @@ tags:
   - name: pictures
     description: Photo file storage and delivery
   - name: repairs
-    description: Repair lifecycle (RIPA / RIPA FRIGO)
+    description: Repair lifecycle
   - name: work-log
     description: Work-log entries nested under a repair, with gas-recharge bookkeeping

@@ -2,8 +2,9 @@
 
 Column names follow ``openspec/specs/database_schema.md`` (normalized — see
 the change design document for the deltas): explicit VARCHAR lengths,
-``REPAIRS.END_DATA``/``REPAIRS.TYPE`` and the work-log gas-system-state
-columns required by the field notes, plus the ``REPAIR_PARTS`` join table.
+``REPAIRS.END_DATA``/``REPAIRS.DELIVERY_DATE`` and the work-log
+gas-system-state columns required by the field notes, plus the
+``REPAIR_PARTS`` join table.
 
 Owned tables use lowercase column names (``id``, ``customer``, ...). The
 read-only external tables in ``DATIDBSTORICO`` keep their documented
@@ -20,7 +21,6 @@ from datetime import UTC, datetime
 
 from app.extensions import db
 
-REPAIR_TYPES = ("RIPA", "RIPA_FRIGO")
 GAS_SYSTEM_STATES = ("VUOTO", "PIENO", "RICUPERO_RICARICA")
 
 
@@ -161,9 +161,15 @@ class Repairs(db.Model):
     vehicle = db.Column(db.Integer)
     start_data = db.Column(db.DateTime, default=_now)
     end_data = db.Column(db.DateTime)
-    type = db.Column(db.String(10), nullable=False)
+    # Delivery date requested by the customer (a date, not a timestamp);
+    # distinct from end_data, which is the actual close time.
+    delivery_date = db.Column(db.Date)
     notes = db.Column(db.String(4000))
     refrigerator = db.Column(db.Integer, db.ForeignKey("REFRIGERATORS.id"))
+
+    # Computed on read and attached by the service layer (never stored).
+    customer_name = None
+    total_hours = 0.0
 
     refrigerator_rel = db.relationship("Refrigerator", back_populates="repairs")
     work_log = db.relationship(
@@ -181,11 +187,15 @@ class Repairs(db.Model):
         data = {
             "id": self.id,
             "customer": self.customer,
+            "customer_name": self.customer_name,
             "vehicle": self.vehicle,
-            "type": self.type,
             "refrigerator": self.refrigerator,
             "start_data": self.start_data.isoformat() if self.start_data else None,
             "end_data": self.end_data.isoformat() if self.end_data else None,
+            "delivery_date": self.delivery_date.isoformat()
+            if self.delivery_date
+            else None,
+            "total_hours": self.total_hours,
             "notes": self.notes,
         }
         if include_details:

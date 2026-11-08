@@ -1,12 +1,15 @@
 """Repairs API tests (tasks 5.1-5.5).
 
-Covers every scenario in the repairs capability spec: create/type,
+Covers every scenario in the repairs capability spec: create/delivery date,
 retrieve, update, delete (cascade + balance restore), parts association,
 work log, and gas-recharge bookkeeping.
 """
 from datetime import UTC, datetime
+from io import BytesIO
 
-from app.models import GasCylinder, Repairs, RepairWorkLog, ServicePart
+from openpyxl import load_workbook
+
+from app.models import Customer, GasCylinder, Repairs, RepairWorkLog, ServicePart
 
 
 def _now():
@@ -14,7 +17,7 @@ def _now():
 
 
 def _create_repair(client, **overrides):
-    payload = {"type": "RIPA", "customer": 1, "vehicle": 1}
+    payload = {"customer": 1, "vehicle": 1}
     payload.update(overrides)
     return client.post("/api/v1/repairs", json=payload)
 
@@ -39,7 +42,7 @@ class TestErrors:
         # refrigerator FK is enforced by the DB; an unknown refrigerator -> 409
         response = client.post(
             "/api/v1/repairs",
-            json={"type": "RIPA", "customer": 1, "vehicle": 1, "refrigerator": 99999},
+            json={"customer": 1, "vehicle": 1, "refrigerator": 99999},
         )
         assert response.status_code == 409
         assert set(response.get_json()) == {"error"}
@@ -48,13 +51,15 @@ class TestErrors:
 # --- 5.2 repairs CRUD ----------------------------------------------------------
 
 class TestCreate:
-    def test_create_ripa_frigo(self, client, db):
-        response = _create_repair(client, type="RIPA_FRIGO")
+    def test_create_with_delivery_date(self, client, db):
+        response = _create_repair(client, delivery_date="2026-08-01")
         assert response.status_code == 201
         payload = response.get_json()
         assert payload["id"] is not None
-        assert payload["type"] == "RIPA_FRIGO"
+        assert payload["delivery_date"] == "2026-08-01"
         assert payload["start_data"] is not None
+        # The removed type field is gone from the response shape.
+        assert "type" not in payload
 
     def test_start_datetime_defaults_to_now(self, client, db):
         before = _now()
@@ -75,25 +80,11 @@ class TestCreate:
     def test_unknown_vehicle_rejected_409(self, client, db):
         assert _create_repair(client, vehicle=99999).status_code == 409
 
-    def test_missing_type_rejected_400(self, client, db):
-        response = client.post("/api/v1/repairs", json={"customer": 1, "vehicle": 1})
-        assert response.status_code == 400
-
-
-class TestType:
-    def test_invalid_type_create_400(self, client, db):
-        assert _create_repair(client, type="NOPE").status_code == 400
-
-    def test_invalid_type_update_400(self, client, db):
-        repair_id = _create_repair(client).get_json()["id"]
-        response = client.put(f"/api/v1/repairs/{repair_id}", json={"type": "BAD"})
-        assert response.status_code == 400
-
 
 class TestRetrieve:
     def test_list_all(self, client, db):
         _create_repair(client)
-        _create_repair(client, type="RIPA_FRIGO")
+        _create_repair(client)
         response = client.get("/api/v1/repairs")
         assert response.status_code == 200
         assert len(response.get_json()) == 2
@@ -102,13 +93,6 @@ class TestRetrieve:
         _create_repair(client, customer=1)
         response = client.get("/api/v1/repairs?customer=1")
         assert all(item["customer"] == 1 for item in response.get_json())
-
-    def test_filter_by_type(self, client, db):
-        _create_repair(client, type="RIPA")
-        _create_repair(client, type="RIPA_FRIGO")
-        response = client.get("/api/v1/repairs?type=RIPA_FRIGO")
-        body = response.get_json()
-        assert len(body) == 1 and body[0]["type"] == "RIPA_FRIGO"
 
     def test_detail_includes_work_log_and_parts(self, client, db):
         part = ServicePart(name="P")
@@ -137,6 +121,65 @@ class TestRetrieve:
         assert client.get("/api/v1/repairs/99999").status_code == 404
 
 
+# --- computed list/detail fields -----------------------------------------------
+
+class TestComputedFields:
+    def test_total_hours_sums_work_log_durations(self, client, db):
+        repair_id = _create_repair(client).get_json()["id"]
+        client.post(
+            f"/api/v1/repairs/{repair_id}/work-log",
+            json={"start_time": "2026-01-01T08:00:00", "end_time": "2026-01-01T09:30:00"},
+        )
+        client.post(
+            f"/api/v1/repairs/{repair_id}/work-log",
+            json={"start_time": "2026-01-01T10:00:00", "end_time": "2026-01-01T12:00:00"},
+        )
+
+        detail = client.get(f"/api/v1/repairs/{repair_id}").get_json()
+        assert detail["total_hours"] == 3.5  # 1h30 + 2h00
+
+        listing = client.get("/api/v1/repairs").get_json()
+        row = next(item for item in listing if item["id"] == repair_id)
+        assert row["total_hours"] == 3.5
+
+    def test_null_duration_entries_contribute_zero(self, client, db):
+        repair_id = _create_repair(client).get_json()["id"]
+        # An open entry (start only) and an empty entry: both contribute zero.
+        client.post(
+            f"/api/v1/repairs/{repair_id}/work-log",
+            json={"start_time": "2026-01-01T08:00:00"},
+        )
+        client.post(f"/api/v1/repairs/{repair_id}/work-log", json={"operator": "B"})
+
+        detail = client.get(f"/api/v1/repairs/{repair_id}").get_json()
+        assert detail["total_hours"] == 0.0
+
+    def test_customer_name_resolved_from_reference_data(self, client, db):
+        created = _create_repair(client, customer=1).get_json()
+        # The seeded VICLIENTI shim row (id 1) is ACME SRL.
+        assert created["customer_name"] == "ACME SRL"
+
+        listing = client.get("/api/v1/repairs").get_json()
+        row = next(item for item in listing if item["id"] == created["id"])
+        assert row["customer_name"] == "ACME SRL"
+
+        detail = client.get(f"/api/v1/repairs/{created['id']}").get_json()
+        assert detail["customer_name"] == "ACME SRL"
+
+    def test_customer_name_null_when_id_has_no_record(self, client, db):
+        # Insert directly: the API would reject an unknown customer (409).
+        repair = Repairs(customer=999, vehicle=1)
+        db.session.add(repair)
+        db.session.commit()
+
+        detail = client.get(f"/api/v1/repairs/{repair.id}").get_json()
+        assert detail["customer_name"] is None
+
+        listing = client.get("/api/v1/repairs").get_json()
+        row = next(item for item in listing if item["id"] == repair.id)
+        assert row["customer_name"] is None
+
+
 class TestUpdate:
     def test_complete_repair(self, client, db):
         repair_id = _create_repair(client).get_json()["id"]
@@ -152,6 +195,14 @@ class TestUpdate:
         response = client.put(f"/api/v1/repairs/{repair_id}", json={"end_data": None})
         assert response.status_code == 200
         assert response.get_json()["end_data"] is None
+
+    def test_change_delivery_date(self, client, db):
+        repair_id = _create_repair(client).get_json()["id"]
+        response = client.put(
+            f"/api/v1/repairs/{repair_id}", json={"delivery_date": "2026-09-15"}
+        )
+        assert response.status_code == 200
+        assert response.get_json()["delivery_date"] == "2026-09-15"
 
 
 class TestDelete:
@@ -254,7 +305,7 @@ class TestWorkLog:
 class TestGasRecharge:
     def test_recharge_decreases_balance(self, client, db):
         cyl_id = _cylinder(db, remaining=10.0)
-        repair_id = _create_repair(client, type="RIPA_FRIGO").get_json()["id"]
+        repair_id = _create_repair(client).get_json()["id"]
         response = client.post(
             f"/api/v1/repairs/{repair_id}/work-log",
             json={
@@ -267,7 +318,7 @@ class TestGasRecharge:
         assert db.session.get(GasCylinder, cyl_id).remaining_weight == 7.5
 
     def test_full_system_stores_no_gas_data(self, client, db):
-        repair_id = _create_repair(client, type="RIPA_FRIGO").get_json()["id"]
+        repair_id = _create_repair(client).get_json()["id"]
         entry = client.post(
             f"/api/v1/repairs/{repair_id}/work-log",
             json={"gas_system_state": "PIENO"},
@@ -277,7 +328,7 @@ class TestGasRecharge:
 
     def test_recovered_weight_stored_balance_only_recharge(self, client, db):
         cyl_id = _cylinder(db, remaining=10.0)
-        repair_id = _create_repair(client, type="RIPA_FRIGO").get_json()["id"]
+        repair_id = _create_repair(client).get_json()["id"]
         response = client.post(
             f"/api/v1/repairs/{repair_id}/work-log",
             json={
@@ -293,7 +344,7 @@ class TestGasRecharge:
 
     def test_overdraw_rejected_balance_unchanged(self, client, db):
         cyl_id = _cylinder(db, remaining=10.0)
-        repair_id = _create_repair(client, type="RIPA_FRIGO").get_json()["id"]
+        repair_id = _create_repair(client).get_json()["id"]
         response = client.post(
             f"/api/v1/repairs/{repair_id}/work-log",
             json={"gas_system_state": "VUOTO", "gas_recharge": cyl_id, "gas_recharge_weight": 12.0},
@@ -304,16 +355,29 @@ class TestGasRecharge:
         assert detail["work_log"] == []
 
     def test_recharge_without_cylinder_400(self, client, db):
-        repair_id = _create_repair(client, type="RIPA_FRIGO").get_json()["id"]
+        repair_id = _create_repair(client).get_json()["id"]
         response = client.post(
             f"/api/v1/repairs/{repair_id}/work-log",
             json={"gas_system_state": "VUOTO", "gas_recharge_weight": 1.0},
         )
         assert response.status_code == 400
 
+    def test_gas_data_without_state_rejected(self, client, db):
+        cyl_id = _cylinder(db, remaining=10.0)
+        repair_id = _create_repair(client).get_json()["id"]
+        response = client.post(
+            f"/api/v1/repairs/{repair_id}/work-log",
+            json={"gas_recharge": cyl_id, "gas_recharge_weight": 1.0},
+        )
+        assert response.status_code == 400
+        # The balance is untouched and no entry was created.
+        assert db.session.get(GasCylinder, cyl_id).remaining_weight == 10.0
+        detail = client.get(f"/api/v1/repairs/{repair_id}").get_json()
+        assert detail["work_log"] == []
+
     def test_balance_restored_on_delete(self, client, db):
         cyl_id = _cylinder(db, remaining=10.0)
-        repair_id = _create_repair(client, type="RIPA_FRIGO").get_json()["id"]
+        repair_id = _create_repair(client).get_json()["id"]
         entry_id = client.post(
             f"/api/v1/repairs/{repair_id}/work-log",
             json={"gas_system_state": "VUOTO", "gas_recharge": cyl_id, "gas_recharge_weight": 2.5},
@@ -324,7 +388,7 @@ class TestGasRecharge:
 
     def test_repair_delete_restores_balance(self, client, db):
         cyl_id = _cylinder(db, remaining=10.0)
-        repair_id = _create_repair(client, type="RIPA_FRIGO").get_json()["id"]
+        repair_id = _create_repair(client).get_json()["id"]
         client.post(
             f"/api/v1/repairs/{repair_id}/work-log",
             json={"gas_system_state": "VUOTO", "gas_recharge": cyl_id, "gas_recharge_weight": 2.5},
@@ -332,3 +396,36 @@ class TestGasRecharge:
         assert db.session.get(GasCylinder, cyl_id).remaining_weight == 7.5
         client.delete(f"/api/v1/repairs/{repair_id}")
         assert db.session.get(GasCylinder, cyl_id).remaining_weight == 10.0
+
+
+# --- Excel export --------------------------------------------------------------
+
+XLSX_MIMETYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+class TestExport:
+    def test_export_all_repairs_one_row_each(self, client, db):
+        _create_repair(client)
+        _create_repair(client)
+        response = client.get("/api/v1/repairs/export")
+        assert response.status_code == 200
+        assert response.headers["Content-Type"] == XLSX_MIMETYPE
+        assert "attachment" in response.headers["Content-Disposition"]
+
+        sheet = load_workbook(BytesIO(response.data)).active
+        assert sheet.max_row == 3  # header + two repairs
+        assert sheet.cell(row=1, column=1).value == "id"
+
+    def test_export_honors_filters(self, client, db):
+        db.session.add(
+            Customer(ID=2, N_NOMINATIVO=2, CLIENTE="BETA SNC", NCLIENTE="C002")
+        )
+        db.session.commit()
+        _create_repair(client, customer=1)
+        _create_repair(client, customer=2)
+
+        response = client.get("/api/v1/repairs/export?customer=2")
+        assert response.status_code == 200
+        sheet = load_workbook(BytesIO(response.data)).active
+        assert sheet.max_row == 2  # header + the one matching repair
+        assert sheet.cell(row=2, column=2).value == 2

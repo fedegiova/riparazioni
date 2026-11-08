@@ -4,7 +4,7 @@ from app.models import RepairPart, Repairs, RepairWorkLog
 
 
 def _new_repair(db, refrigerator_id=None):
-    repair = Repairs(customer=1, vehicle=1, type="RIPA", refrigerator=refrigerator_id)
+    repair = Repairs(customer=1, vehicle=1, refrigerator=refrigerator_id)
     db.session.add(repair)
     db.session.commit()
     return repair.id

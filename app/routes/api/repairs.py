@@ -5,12 +5,16 @@ translate between HTTP and the service, and commit at the end of each
 mutating request so related writes share one transaction.
 """
 
-from flask import jsonify, request
+import io
+
+from flask import jsonify, request, send_file
 
 from app.extensions import db
 from app.routes.api import bp
 from app.services import repairs as repairs_service
 from app.services.errors import BadRequest
+
+XLSX_MIMETYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 def _json_body() -> dict:
@@ -26,6 +30,19 @@ def _json_body() -> dict:
 def list_repairs():
     repairs = repairs_service.list_repairs(request.args)
     return jsonify([repair.to_dict() for repair in repairs])
+
+
+@bp.get("/repairs/export")
+def export_repairs():
+    """Download the (filterable) repairs list as an .xlsx workbook."""
+    repairs = repairs_service.list_repairs(request.args)
+    workbook = repairs_service.export_repairs_xlsx(repairs)
+    return send_file(
+        io.BytesIO(workbook),
+        mimetype=XLSX_MIMETYPE,
+        as_attachment=True,
+        download_name="repairs.xlsx",
+    )
 
 
 @bp.post("/repairs")
