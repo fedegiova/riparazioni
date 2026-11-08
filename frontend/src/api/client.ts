@@ -1,7 +1,12 @@
 // Shared client for the /api/v1 backend. All data access in the app goes
-// through `request`; later per-endpoint helpers (src/api/*.ts) build on it.
+// through `api` below: a typed openapi-fetch client whose per-endpoint
+// signatures and request/response types are generated from
+// `docs/openapi.yaml` into `src/api/generated/schema.d.ts`
+// (regenerate with `npm run generate:api`).
+import createFetchClient from 'openapi-fetch'
 
-const API_BASE = '/api/v1'
+export type { components, paths } from './generated/schema'
+import type { paths } from './generated/schema'
 
 export class ApiError extends Error {
   readonly status: number
@@ -14,38 +19,38 @@ export class ApiError extends Error {
 }
 
 /**
- * Call a /api/v1 endpoint with a JSON body and return the parsed JSON
- * response. Non-2xx responses reject with an ApiError carrying the backend
- * error envelope message (`{"error": "message"}`), or a generic message
- * with the status when the body is not an envelope.
+ * Typed client for the /api/v1 API. No baseUrl: the OpenAPI document's paths
+ * already carry the /api/v1 prefix, so every call is a same-origin relative
+ * URL (served by the Vite dev proxy or by any same-origin production setup).
+ *
+ * 2xx responses resolve to `{ data, response }`, where `data` is the parsed
+ * JSON body (typed to the document's response schema; `undefined` for 204s
+ * and empty bodies). 4xx/5xx responses reject with an ApiError carrying the
+ * backend error envelope message (`{"error": "message"}`), or a generic
+ * message with the status when the body is not an envelope. Network failures
+ * (e.g. backend down) reject with the underlying fetch error.
  */
-export async function request<T>(
-  method: string,
-  path: string,
-  body?: unknown,
-): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
-    method,
-    headers: { 'Content-Type': 'application/json' },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  })
+export const api = createFetchClient<paths>()
 
-  if (response.ok) {
-    if (response.status === 204) {
-      return undefined as T
+api.use({
+  async onResponse({ response }) {
+    if (response.ok) return
+
+    let message = `Request failed with status ${response.status}`
+    try {
+      const payload: unknown = JSON.parse(await response.text())
+      if (
+        typeof payload === 'object' &&
+        payload !== null &&
+        typeof (payload as { error?: unknown }).error === 'string' &&
+        (payload as { error: string }).error !== ''
+      ) {
+        message = (payload as { error: string }).error
+      }
+    } catch {
+      // Non-JSON error body: keep the generic message.
     }
-    return (await response.json()) as T
-  }
 
-  let message = `Request failed with status ${response.status}`
-  try {
-    const payload = (await response.json()) as { error?: unknown }
-    if (payload && typeof payload.error === 'string' && payload.error !== '') {
-      message = payload.error
-    }
-  } catch {
-    // Non-JSON error body: keep the generic message.
-  }
-
-  throw new ApiError(response.status, message)
-}
+    throw new ApiError(response.status, message)
+  },
+})

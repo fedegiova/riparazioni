@@ -22,11 +22,12 @@ npm install
 
 | Command           | Description                                                        |
 |-------------------|--------------------------------------------------------------------|
-| `npm run dev`     | Dev server with hot reload at `http://localhost:5173`               |
-| `npm run build`   | Type-check (`tsc -b`), then build the production bundle to `dist/` |
-| `npm run preview` | Serve the production build locally                                  |
-| `npm run lint`    | Lint the source (oxlint)                                            |
-| `npm test`        | Run the test suite (Vitest + Testing Library, jsdom)                |
+| `npm run dev`        | Dev server with hot reload at `http://localhost:5173`               |
+| `npm run build`      | Type-check (`tsc -b`), then build the production bundle to `dist/` |
+| `npm run preview`    | Serve the production build locally                                  |
+| `npm run lint`       | Lint the source (oxlint)                                            |
+| `npm test`           | Run the test suite (Vitest + Testing Library, jsdom)                |
+| `npm run generate:api` | Regenerate the typed API client from `docs/openapi.yaml`          |
 
 ## Dev proxy
 
@@ -39,11 +40,29 @@ relying on data from the app.
 
 ```
 src/
-  App.tsx        # ThemeProvider + CssBaseline + BrowserRouter + shell (AppBar)
-  theme.ts       # MUI theme — the single place to rebrand
-  pages/         # Routed pages (HomePage at /, NotFoundPage on catch-all)
-  api/client.ts  # Shared /api/v1 client: relative URLs, ApiError envelope decoding
+  App.tsx             # ThemeProvider + CssBaseline + BrowserRouter + shell (AppBar)
+  theme.ts            # MUI theme — the single place to rebrand
+  pages/              # Routed pages (HomePage at /, NotFoundPage on catch-all)
+  api/client.ts       # Shared /api/v1 client: generated types + ApiError envelope decoding
+  api/generated/      # Generated from docs/openapi.yaml (committed — see "API client")
+  test/setup.ts       # Vitest setup: browser-like relative-URL Request shim for jsdom
 ```
+
+## API client (generated)
+
+`src/api/generated/schema.d.ts` is generated from
+[`docs/openapi.yaml`](../docs/openapi.yaml) and is **committed** to the repo
+(a type declaration only, no runtime cost), so `npm run build`, `lint`, and
+`test` all work from a fresh checkout with no generation step.
+
+If you change `docs/openapi.yaml`, regenerate the client and commit the diff:
+
+```bash
+npm run generate:api
+```
+
+The runtime is `openapi-fetch` (a thin typed wrapper over `fetch`); the
+`generate:api` tool is `openapi-typescript`.
 
 Feature screens (repairs, equipment, pictures) are planned as follow-up
 changes on top of this shell.
