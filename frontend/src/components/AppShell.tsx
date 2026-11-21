@@ -13,6 +13,7 @@ import HomeIcon from '@mui/icons-material/Home'
 import Inventory2Icon from '@mui/icons-material/Inventory2'
 import ListAltIcon from '@mui/icons-material/ListAlt'
 import PeopleIcon from '@mui/icons-material/People'
+import SettingsIcon from '@mui/icons-material/Settings'
 import { Link as RouterLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 
 const EDITOR_ROUTE = /^\/repairs\/(new|\d+)(\/work-log\/(new|\d+))?$/
@@ -54,6 +55,9 @@ function crumbsFor(pathname: string): Crumb[] {
   if (pathname === '/anagrafica') {
     return [{ label: 'Home', to: '/' }, { label: 'Anagrafica' }]
   }
+  if (pathname === '/settings') {
+    return [{ label: 'Home', to: '/' }, { label: 'Settings' }]
+  }
   return [{ label: 'Home', to: '/' }]
 }
 
@@ -87,6 +91,15 @@ export function AppShell() {
           <Typography variant="h6" component="div">
             Riparazioni
           </Typography>
+          <IconButton
+            color="inherit"
+            edge="end"
+            aria-label="Settings"
+            onClick={() => navigate('/settings')}
+            sx={{ ml: 'auto' }}
+          >
+            <SettingsIcon />
+          </IconButton>
         </Toolbar>
       </AppBar>
 

@@ -233,6 +233,24 @@ class RepairWorkLog(db.Model):
         }
 
 
+class Settings(db.Model):
+    """Application settings: a name/value store with JSON-encoded values.
+
+    The value column holds a JSON document as text (see the settings service,
+    which validates and (de)serializes it). Unknown names accept any JSON; the
+    known settings (``operators``, ``working_hours``, ``holidays``) are
+    validated on write.
+    """
+
+    __tablename__ = "SETTINGS"
+
+    name = db.Column(db.String(64), primary_key=True)
+    value = db.Column(db.String(4000), nullable=False, default="")
+
+    def to_dict(self) -> dict:
+        return {"name": self.name, "value": self.value}
+
+
 class RepairPart(db.Model):
     __tablename__ = "REPAIR_PARTS"
 

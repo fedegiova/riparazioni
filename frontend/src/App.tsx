@@ -8,6 +8,7 @@ import MagazzinoPage from './pages/MagazzinoPage'
 import NotFoundPage from './pages/NotFoundPage'
 import RepairPage from './pages/RepairPage'
 import RepairsListPage from './pages/RepairsListPage'
+import SettingsPage from './pages/SettingsPage'
 import WorkLogPage from './pages/WorkLogPage'
 import theme from './theme'
 
@@ -29,6 +30,7 @@ function App() {
               />
               <Route path="/magazzino" element={<MagazzinoPage />} />
               <Route path="/anagrafica" element={<AnagraficaPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
               <Route path="*" element={<NotFoundPage />} />
             </Route>
           </Routes>

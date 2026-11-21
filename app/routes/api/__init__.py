@@ -9,7 +9,7 @@ from flask import Blueprint
 
 bp = Blueprint("api", __name__, url_prefix="/api/v1")
 
-from app.routes.api import equipment, pictures, reference, repairs  # noqa: F401
+from app.routes.api import equipment, pictures, reference, repairs, settings  # noqa: F401
 from app.routes.api.errors import register_error_handlers
 
 register_error_handlers(bp)

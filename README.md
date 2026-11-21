@@ -175,6 +175,31 @@ more than the cylinder's remaining weight is rejected (400); the balance is
 decreased in the same transaction as the entry and restored when the entry
 (or its parent repair) is deleted.
 
+### Settings
+
+Application settings stored as name/value pairs whose values are JSON
+documents.
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/v1/settings` | All settings as a name-to-value map |
+| PUT | `/api/v1/settings` | Upsert several settings in one atomic request |
+| GET | `/api/v1/settings/<name>` | One setting's value |
+| PUT | `/api/v1/settings/<name>` | Create or replace one setting |
+| DELETE | `/api/v1/settings/<name>` | Delete a setting |
+
+Known settings are validated on write (400 on an invalid value); unknown
+names accept any JSON. A known setting that has never been written reads as
+its default:
+
+- `operators` — array of operator names: `["MARIO", "LUIGI"]`
+- `working_hours` — weekday (`mon`..`sun`) to a list of `[HH:MM, HH:MM]`
+  intervals; an empty list means closed:
+  `{"mon": [["08:00", "12:00"], ["14:00", "18:00"]], "sun": []}`
+- `holidays` — four-digit year to a list of `{from, to, name}` ranges inside
+  that year:
+  `{"2026": [{"from": "2026-08-10", "to": "2026-08-21", "name": "Ferie"}]}`
+
 ## Tests
 
 The suite runs **without** MSSQL (in-memory SQLite with an attached

@@ -3,7 +3,7 @@
 Runs the real Alembic migration suite against a temporary SQLite file
 database (Alembic opens its own connections, so an in-memory database is
 not usable here) and verifies:
-- ``upgrade head`` creates exactly the seven owned tables,
+- ``upgrade head`` creates every owned table,
 - no ``DATIDBSTORICO`` object is created,
 - ``downgrade base`` drops them all again.
 """
@@ -25,6 +25,7 @@ OWNED_TABLES = {
     "SERVICE_PARTS",
     "REPAIR_PARTS",
     "REPAIR_WORK_LOG",
+    "SETTINGS",
 }
 EXTERNAL_TABLES = {"TBALLESTIMENTI", "TBUSERS", "VICLIENTI"}
 

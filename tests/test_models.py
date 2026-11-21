@@ -10,12 +10,13 @@ from app.models import (
     Repairs,
     RepairWorkLog,
     ServicePart,
+    Settings,
     Vehicle,
 )
 
 
 def test_owned_models_are_registered(app):
-    """All seven owned mapped classes are registered (task 1.1)."""
+    """All owned mapped classes are registered (task 1.1)."""
     expected_tables = {
         Repairs: "REPAIRS",
         RepairWorkLog: "REPAIR_WORK_LOG",
@@ -24,6 +25,7 @@ def test_owned_models_are_registered(app):
         GasCylinder: "GAS_CYLINDERS",
         ServicePart: "SERVICE_PARTS",
         Picture: "PICTURES",
+        Settings: "SETTINGS",
     }
     for model, table_name in expected_tables.items():
         assert model.__tablename__ == table_name, model

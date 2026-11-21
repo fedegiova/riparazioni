@@ -1283,6 +1283,175 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List settings
+         * @description Every stored setting as a name-to-value map. Known settings that have never
+         *     been written appear with their default value (empty operators, every day
+         *     closed, no holidays).
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Settings map */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SettingsMap"];
+                    };
+                };
+            };
+        };
+        /**
+         * Update several settings
+         * @description Upserts each provided setting in one atomic request. A value that is invalid
+         *     for a known setting rejects the whole request (400) and changes nothing.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SettingsMap"];
+                };
+            };
+            responses: {
+                /** @description The settings map after the update */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SettingsMap"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/settings/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: components["parameters"]["SettingNameParam"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Get a setting
+         * @description A known setting that has never been written returns its default; an unknown name is 404.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    name: components["parameters"]["SettingNameParam"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The setting value */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SettingsValue"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        /**
+         * Create or replace a setting
+         * @description Upserts one setting. Known settings are validated (400 on an invalid value);
+         *     unknown names accept any JSON value.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    name: components["parameters"]["SettingNameParam"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SettingsValue"];
+                };
+            };
+            responses: {
+                /** @description The stored setting value */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SettingsValue"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+            };
+        };
+        post?: never;
+        /**
+         * Delete a setting
+         * @description Removes the stored value; a known setting reverts to its default on the next read.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    name: components["parameters"]["SettingNameParam"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1523,6 +1692,18 @@ export interface components {
             gas_recharge_weight?: number | null;
             gas_recovered_weight?: number | null;
         };
+        /** @description A name-to-value map of application settings. Values are JSON documents. */
+        SettingsMap: {
+            [key: string]: unknown;
+        };
+        /**
+         * @description A setting value as a JSON document. The known settings are `operators`
+         *     (array of strings), `working_hours` (weekday name to a list of
+         *     `[HH:MM, HH:MM]` intervals, an empty list meaning closed), and `holidays`
+         *     (four-digit year to a list of `{from, to, name}` date ranges within that
+         *     year).
+         */
+        SettingsValue: unknown;
     };
     responses: {
         /** @description Validation error */
@@ -1563,6 +1744,7 @@ export interface components {
         PictureIdParam: number;
         RepairIdParam: number;
         EntryIdParam: number;
+        SettingNameParam: string;
     };
     requestBodies: never;
     headers: never;

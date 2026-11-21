@@ -719,6 +719,92 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  # ------------------------------------------------------------------
+  # Settings
+  # ------------------------------------------------------------------
+  /api/v1/settings:
+    get:
+      summary: List settings
+      description: |
+        Every stored setting as a name-to-value map. Known settings that have never
+        been written appear with their default value (empty operators, every day
+        closed, no holidays).
+      tags: [settings]
+      responses:
+        "200":
+          description: Settings map
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsMap"
+    put:
+      summary: Update several settings
+      description: |
+        Upserts each provided setting in one atomic request. A value that is invalid
+        for a known setting rejects the whole request (400) and changes nothing.
+      tags: [settings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SettingsMap"
+      responses:
+        "200":
+          description: The settings map after the update
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsMap"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /api/v1/settings/{name}:
+    parameters:
+      - $ref: "#/components/parameters/SettingNameParam"
+    get:
+      summary: Get a setting
+      description: A known setting that has never been written returns its default; an unknown name is 404.
+      tags: [settings]
+      responses:
+        "200":
+          description: The setting value
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsValue"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      summary: Create or replace a setting
+      description: |
+        Upserts one setting. Known settings are validated (400 on an invalid value);
+        unknown names accept any JSON value.
+      tags: [settings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SettingsValue"
+      responses:
+        "200":
+          description: The stored setting value
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsValue"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+    delete:
+      summary: Delete a setting
+      description: Removes the stored value; a known setting reverts to its default on the next read.
+      tags: [settings]
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
 components:
   parameters:
     VehicleIdParam:
@@ -775,6 +861,12 @@ components:
       required: true
       schema:
         type: integer
+    SettingNameParam:
+      name: name
+      in: path
+      required: true
+      schema:
+        type: string
 
   responses:
     BadRequest:
@@ -1248,6 +1340,19 @@ components:
           type: number
           nullable: true
 
+    # --- settings -------------------------------------------------------------
+    SettingsMap:
+      type: object
+      description: A name-to-value map of application settings. Values are JSON documents.
+      additionalProperties: true
+    SettingsValue:
+      description: |
+        A setting value as a JSON document. The known settings are `operators`
+        (array of strings), `working_hours` (weekday name to a list of
+        `[HH:MM, HH:MM]` intervals, an empty list meaning closed), and `holidays`
+        (four-digit year to a list of `{from, to, name}` date ranges within that
+        year).
+
 tags:
   - name: reference-data
     description: Read-only access to the legacy DATIDBSTORICO objects
@@ -1259,3 +1364,5 @@ tags:
     description: Repair lifecycle
   - name: work-log
     description: Work-log entries nested under a repair, with gas-recharge bookkeeping
+  - name: settings
+    description: Application settings as a JSON name/value store
