@@ -169,3 +169,16 @@ asking the user for a file name.
 #### Scenario: Delete a picture
 - **WHEN** the user deletes a picture from the repair page
 - **THEN** it is removed from the list and no longer stored for that repair
+
+### Requirement: View a repair's pictures full screen
+The repair page SHALL let the user open one of the repair's pictures in the
+full-screen picture gallery, and SHALL let the user scroll between that repair's
+pictures while it is open.
+
+#### Scenario: Open a repair picture full screen
+- **WHEN** the user activates one of the repair's picture thumbnails
+- **THEN** that picture is shown full screen
+
+#### Scenario: Scroll between the repair's pictures
+- **WHEN** the user requests the next or previous picture while a repair picture is shown full screen
+- **THEN** the viewer shows the next or previous picture of that repair
