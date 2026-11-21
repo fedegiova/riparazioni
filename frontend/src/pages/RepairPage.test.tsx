@@ -37,9 +37,36 @@ vi.mock('../api/repairs', () => ({
 vi.mock('../api/reference', () => ({ listCustomers, listVehicles }))
 vi.mock('../api/equipment', () => ({ listServiceParts }))
 vi.mock('../api/pictures', () => ({
+  listPictures: vi.fn(),
   uploadPicture,
   deletePicture,
   pictureFileUrl: (id: number) => `/api/v1/pictures/${id}/file`,
+  pictureThumbnailUrl: (id: number) => `/api/v1/pictures/${id}/thumbnail`,
+}))
+
+// The real lightbox renders through a portal and preloads images; this mock
+// keeps the page test on the app's own wiring.
+vi.mock('yet-another-react-lightbox', () => ({
+  default: (props: {
+    open?: boolean
+    slides?: Array<{ src: string }>
+    index?: number
+    on?: { view?: (props: { index: number }) => void }
+  }) => {
+    if (!props.open) return null
+    const index = props.index ?? 0
+    return (
+      <div data-testid="gallery">
+        <span data-testid="gallery-src">{props.slides?.[index]?.src}</span>
+        <button
+          type="button"
+          onClick={() => props.on?.view?.({ index: index + 1 })}
+        >
+          gallery-next
+        </button>
+      </div>
+    )
+  },
 }))
 
 afterEach(() => {
@@ -264,7 +291,28 @@ describe('RepairPage', () => {
     renderAt('/repairs/1')
 
     const image = (await screen.findByAltText('Picture 5')) as HTMLImageElement
-    expect(image.getAttribute('src')).toBe('/api/v1/pictures/5/file')
+    expect(image.getAttribute('src')).toBe('/api/v1/pictures/5/thumbnail')
+  })
+
+  it('opens a repair picture full screen and scrolls to the next one', async () => {
+    getRepair.mockResolvedValue({
+      ...baseRepair,
+      pictures: [
+        { id: 5, path: 'repair/a.jpg', owner_type: 'repair', owner_id: 1 },
+        { id: 6, path: 'repair/b.jpg', owner_type: 'repair', owner_id: 1 },
+      ],
+    })
+    renderAt('/repairs/1')
+
+    fireEvent.click(await screen.findByAltText('Picture 5'))
+    expect((await screen.findByTestId('gallery-src')).textContent).toBe(
+      '/api/v1/pictures/5/file',
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'gallery-next' }))
+    expect(screen.getByTestId('gallery-src').textContent).toBe(
+      '/api/v1/pictures/6/file',
+    )
   })
 
   it('deletes a picture from the repair page', async () => {

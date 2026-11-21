@@ -146,12 +146,19 @@ A picture is attached to exactly one owner at upload: a `repair`, a `spare`
 | GET | `/api/v1/pictures` | List pictures; filter with `?owner_type=&owner_id=` |
 | GET | `/api/v1/pictures/<id>` | Picture metadata |
 | GET | `/api/v1/pictures/<id>/file` | Download the stored file |
-| DELETE | `/api/v1/pictures/<id>` | Delete record + file |
+| GET | `/api/v1/pictures/<id>/thumbnail` | Download the minified view (longest edge ≤ 320 px) |
+| DELETE | `/api/v1/pictures/<id>` | Delete record + file + minified view |
 
 An unknown owner type or a missing owner id is a `400`; an owner id that does
-not exist is a `409`. Files are stored as
+not exist is a `409`. An upload that is not a decodable image is a `400` and
+stores nothing. Files are stored as
 `UPLOAD_DIR/<owner_type>/YYYY-MM-DD-SEQ.<ext>`, where `SEQ` is a per-type,
-per-day sequence; `PICTURES.path` keeps the relative path.
+per-day sequence; `PICTURES.path` keeps the relative path. Each upload is
+decoded and stored resized so its longest edge is at most **2880 px**, and a
+minified derivative (`YYYY-MM-DD-SEQ.thumb.<ext>`, longest edge ≤ 320 px) is
+written beside it and served at `/thumbnail`. The extension follows the decoded
+format, not the upload's file name. Pictures stored before this behavior get
+their minified view generated on first `/thumbnail` request.
 
 ### Repairs
 
@@ -273,6 +280,23 @@ make db-upgrade                  # apply pending migrations
   never require a live MSSQL database.
 - Add or extend tests for every behavior change and keep the migration
   round-trip test (`tests/test_migration.py`) passing.
+
+### Mobile photo uploads in dev
+
+Camera uploads from Firefox for Android can fail against the Vite dev server
+while the storage picker works. The camera app backgrounds the tab, the HMR
+WebSocket drops, and when it reconnects Vite calls `location.reload()`; that
+reload aborts the in-flight upload. The backend sees a truncated body and
+returns `400`, and the API logs `client disconnected before the request body
+was complete` (Werkzeug's `ClientDisconnected`).
+
+This is a dev-server artifact, not an API bug: the production build has no HMR,
+so the upload is not interrupted. To test mobile camera uploads, use the built
+app (`npm run build` then `npm run preview -- --host`, or the deployed build)
+or disable HMR in `frontend/vite.config.ts` (`server.hmr: false`). If a
+production reload also loses the upload (e.g. the OS discards the tab while the
+camera is open), persist the selected photo to IndexedDB and resume the upload
+after reload.
 
 ### OpenSpec SDD
 

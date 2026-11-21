@@ -23,6 +23,12 @@ const {
 
 const { getGasTypes } = vi.hoisted(() => ({ getGasTypes: vi.fn() }))
 
+const { listPictures, uploadPicture, deletePicture } = vi.hoisted(() => ({
+  listPictures: vi.fn(),
+  uploadPicture: vi.fn(),
+  deletePicture: vi.fn(),
+}))
+
 vi.mock('../api/equipment', () => ({
   listGasCylinders,
   createGasCylinder,
@@ -35,10 +41,21 @@ vi.mock('../api/equipment', () => ({
 
 vi.mock('../api/settings', () => ({ getGasTypes }))
 
+vi.mock('../api/pictures', () => ({
+  listPictures,
+  uploadPicture,
+  deletePicture,
+  pictureThumbnailUrl: (id: number) => `/api/v1/pictures/${id}/thumbnail`,
+  pictureFileUrl: (id: number) => `/api/v1/pictures/${id}/file`,
+}))
+
+vi.mock('yet-another-react-lightbox', () => ({ default: () => null }))
+
 beforeEach(() => {
   vi.resetAllMocks()
   getGasTypes.mockResolvedValue([])
   listGasCylinders.mockResolvedValue([])
+  listPictures.mockResolvedValue([])
 })
 
 afterEach(() => {
@@ -263,5 +280,85 @@ describe('CylindersManager', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Log A' }))
 
     expect(await screen.findByText('cylinder log 5')).toBeTruthy()
+  })
+
+  it("opens a cylinder's Pictures dialog and loads its pictures", async () => {
+    listGasCylinders.mockResolvedValue([
+      { id: 5, serial_nr: 'A', full_weight: 10, remaining_weight: 5 },
+    ])
+    listPictures.mockResolvedValue([
+      { id: 9, path: 'cylinder/9.jpg', owner_type: 'cylinder', owner_id: 5 },
+    ])
+    renderManager()
+
+    await screen.findByText('A')
+    fireEvent.click(screen.getByRole('button', { name: 'Pictures A' }))
+
+    expect(await screen.findByAltText('Picture 9')).toBeTruthy()
+    expect(listPictures).toHaveBeenCalledWith('cylinder', 5)
+  })
+
+  it('uploads a captured picture for a cylinder', async () => {
+    listGasCylinders.mockResolvedValue([
+      { id: 5, serial_nr: 'A', full_weight: 10, remaining_weight: 5 },
+    ])
+    uploadPicture.mockResolvedValue({
+      id: 9,
+      path: 'cylinder/9.jpg',
+      owner_type: 'cylinder',
+      owner_id: 5,
+    })
+    renderManager()
+
+    await screen.findByText('A')
+    fireEvent.click(screen.getByRole('button', { name: 'Pictures A' }))
+    const input = await screen.findByTestId('picture-input')
+    const file = new File(['bytes'], 'shot.jpg', { type: 'image/jpeg' })
+    fireEvent.change(input, { target: { files: [file] } })
+
+    await waitFor(() => expect(uploadPicture).toHaveBeenCalledWith(file, 'cylinder', 5))
+    expect(await screen.findByAltText('Picture 9')).toBeTruthy()
+  })
+
+  it('deletes a cylinder picture', async () => {
+    listGasCylinders.mockResolvedValue([
+      { id: 5, serial_nr: 'A', full_weight: 10, remaining_weight: 5 },
+    ])
+    listPictures.mockResolvedValue([
+      { id: 9, path: 'cylinder/9.jpg', owner_type: 'cylinder', owner_id: 5 },
+    ])
+    deletePicture.mockResolvedValue(undefined)
+    renderManager()
+
+    await screen.findByText('A')
+    fireEvent.click(screen.getByRole('button', { name: 'Pictures A' }))
+    await screen.findByAltText('Picture 9')
+    fireEvent.click(screen.getByRole('button', { name: 'Delete picture 9' }))
+
+    await waitFor(() => expect(deletePicture).toHaveBeenCalledWith(9))
+    await waitFor(() => expect(screen.queryByAltText('Picture 9')).toBeNull())
+  })
+
+  it('shows pictures inside the edit dialog for an existing cylinder', async () => {
+    listGasCylinders.mockResolvedValue([
+      { id: 5, serial_nr: 'A', full_weight: 10, remaining_weight: 5 },
+    ])
+    renderManager()
+
+    await screen.findByText('A')
+    fireEvent.click(screen.getByRole('button', { name: 'Edit A' }))
+
+    expect(await screen.findByRole('button', { name: 'Add picture' })).toBeTruthy()
+    expect(listPictures).toHaveBeenCalledWith('cylinder', 5)
+  })
+
+  it('offers no picture controls for a new cylinder', async () => {
+    listGasCylinders.mockResolvedValue([])
+    renderManager()
+
+    await screen.findByText('No cylinders.')
+    fireEvent.click(screen.getByRole('button', { name: 'New cylinder' }))
+
+    expect(screen.queryByRole('button', { name: 'Add picture' })).toBeNull()
   })
 })

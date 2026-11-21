@@ -513,7 +513,7 @@ paths:
                 file:
                   type: string
                   format: binary
-                  description: The image file (extension is preserved)
+                  description: The image file; it is decoded and stored resized to a 2880 px longest edge, with a 320 px minified view created alongside it. A file that is not a decodable image is rejected.
                 owner_type:
                   type: string
                   enum: [repair, spare, cylinder]
@@ -569,6 +569,23 @@ paths:
           description: File content
           content:
             application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/pictures/{picture_id}/thumbnail:
+    get:
+      summary: Download the minified view
+      description: Serves the picture's minified derivative (longest edge at most 320 px). When a picture has no derivative yet it is generated from the stored file and recorded on first request. The location is resolved only from the stored metadata (path traversal is not possible).
+      tags: [pictures]
+      parameters:
+        - $ref: "#/components/parameters/PictureIdParam"
+      responses:
+        "200":
+          description: Thumbnail image content
+          content:
+            image/*:
               schema:
                 type: string
                 format: binary

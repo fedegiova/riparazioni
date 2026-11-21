@@ -8,12 +8,19 @@ from datetime import UTC, datetime
 from io import BytesIO
 
 from openpyxl import load_workbook
+from PIL import Image
 
 from app.models import Customer, GasCylinder, Repairs, RepairWorkLog, ServicePart
 
 
 def _now():
     return datetime.now(UTC).replace(tzinfo=None)
+
+
+def _jpeg_bytes(size=(64, 64)):
+    buffer = BytesIO()
+    Image.new("RGB", size, (10, 20, 30)).save(buffer, format="JPEG")
+    return buffer.getvalue()
 
 
 def _create_repair(client, **overrides):
@@ -122,7 +129,7 @@ class TestRetrieve:
         upload = client.post(
             "/api/v1/pictures",
             data={
-                "file": (BytesIO(b"\xff\xd8\xff"), "p.jpg"),
+                "file": (BytesIO(_jpeg_bytes()), "p.jpg"),
                 "owner_type": "repair",
                 "owner_id": str(repair["id"]),
             },

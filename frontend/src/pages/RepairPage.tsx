@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Alert,
   Box,
@@ -24,7 +24,6 @@ import SearchIcon from '@mui/icons-material/Search'
 import StopCircleIcon from '@mui/icons-material/StopCircle'
 import { useNavigate, useParams } from 'react-router-dom'
 import { listServiceParts } from '../api/equipment'
-import { deletePicture, pictureFileUrl, uploadPicture } from '../api/pictures'
 import { listCustomers, listVehicles } from '../api/reference'
 import {
   createRepair,
@@ -33,7 +32,8 @@ import {
   updateRepair,
   updateWorkLog,
 } from '../api/repairs'
-import type { Picture, ServicePart } from '../api/types'
+import type { ServicePart } from '../api/types'
+import PictureSection from '../components/PictureSection'
 import SearchModal from '../components/SearchModal'
 import { useApi } from '../hooks/useApi'
 import {
@@ -81,10 +81,9 @@ function RepairPage() {
   const [saving, setSaving] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
 
-  const [pictures, setPictures] = useState<Picture[]>([])
-  const [pictureError, setPictureError] = useState<string | null>(null)
-  const [uploadingPicture, setUploadingPicture] = useState(false)
-  const pictureInput = useRef<HTMLInputElement>(null)
+  // The repair detail already carries its pictures; pass them in so the
+  // section makes no extra request. A stable reference avoids re-seeding.
+  const repairPictures = useMemo(() => repair?.pictures ?? [], [repair])
 
   useEffect(() => {
     if (!repair) return
@@ -107,7 +106,6 @@ function RepairPage() {
         unit_price: part.unit_price ?? part.part?.price ?? null,
       })),
     )
-    setPictures(repair.pictures ?? [])
   }, [repair])
 
   async function handleSave() {
@@ -188,34 +186,6 @@ function RepairPage() {
 
   function removePart(idPart: number) {
     setParts((current) => current.filter((part) => part.id_part !== idPart))
-  }
-
-  async function handlePictureSelected(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    if (!file || repairId === null) return
-    setUploadingPicture(true)
-    setPictureError(null)
-    try {
-      const picture = await uploadPicture(file, 'repair', repairId)
-      setPictures((current) => [...current, picture])
-    } catch (err) {
-      setPictureError(err instanceof Error ? err.message : 'Unexpected error')
-    } finally {
-      setUploadingPicture(false)
-      // Clear only AFTER the upload has read the File: resetting the input
-      // earlier can invalidate the blob on mobile browsers, failing the fetch.
-      if (pictureInput.current) pictureInput.current.value = ''
-    }
-  }
-
-  async function handleDeletePicture(id: number) {
-    setPictureError(null)
-    try {
-      await deletePicture(id)
-      setPictures((current) => current.filter((picture) => picture.id !== id))
-    } catch (err) {
-      setPictureError(err instanceof Error ? err.message : 'Unexpected error')
-    }
   }
 
   if (loadingRepair) return <CircularProgress />
@@ -436,70 +406,12 @@ function RepairPage() {
           </Paper>
 
           <Paper sx={{ p: 2, mb: 2 }}>
-            <Box
-              sx={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                mb: 1,
-              }}
-            >
-              <Typography variant="h6">Pictures</Typography>
-              <Button
-                startIcon={<AddIcon />}
-                onClick={() => pictureInput.current?.click()}
-                disabled={uploadingPicture}
-              >
-                Add picture
-              </Button>
-            </Box>
-
-            {pictureError && (
-              <Alert severity="error" sx={{ mb: 1 }}>
-                {pictureError}
-              </Alert>
-            )}
-
-            <input
-              ref={pictureInput}
-              type="file"
-              accept="image/*"
-              capture="environment"
-              data-testid="picture-input"
-              style={{ display: 'none' }}
-              onChange={handlePictureSelected}
+            <PictureSection
+              ownerType="repair"
+              ownerId={repairId as number}
+              initialPictures={repairPictures}
+              title="Pictures"
             />
-
-            {pictures.length === 0 ? (
-              <Typography color="text.secondary">No pictures.</Typography>
-            ) : (
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                {pictures.map((picture) => (
-                  <Box key={picture.id} sx={{ position: 'relative' }}>
-                    <Box
-                      component="img"
-                      src={pictureFileUrl(picture.id)}
-                      alt={`Picture ${picture.id}`}
-                      sx={{
-                        width: 120,
-                        height: 120,
-                        objectFit: 'cover',
-                        borderRadius: 1,
-                      }}
-                    />
-                    <IconButton
-                      color="error"
-                      size="small"
-                      aria-label={`Delete picture ${picture.id}`}
-                      onClick={() => handleDeletePicture(picture.id)}
-                      sx={{ position: 'absolute', top: 0, right: 0 }}
-                    >
-                      <DeleteIcon fontSize="small" />
-                    </IconButton>
-                  </Box>
-                ))}
-              </Box>
-            )}
           </Paper>
 
           <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>

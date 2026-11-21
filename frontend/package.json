@@ -19,7 +19,8 @@
     "openapi-fetch": "^0.17.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "react-router-dom": "^7.18.4"
+    "react-router-dom": "^7.18.4",
+    "yet-another-react-lightbox": "^3.33.1"
   },
   "devDependencies": {
     "@testing-library/dom": "^10.4.2",

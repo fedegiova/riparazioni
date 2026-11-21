@@ -5,13 +5,28 @@ upload time. There is no separate reference to protect, so deleting a picture
 is never a conflict.
 """
 
-from flask import jsonify, request, send_file
+from flask import current_app, jsonify, request, send_file
 
 from app.extensions import db
 from app.models import Picture
 from app.routes.api import bp
 from app.services import pictures as pictures_service
 from app.services.errors import BadRequest, NotFound
+
+
+@bp.before_request
+def _log_picture_upload_request():
+    """Log upload request metadata before Flask parses the multipart body."""
+    if request.method == "POST" and request.path == "/api/v1/pictures":
+        current_app.logger.info(
+            "picture upload request: content_type=%r content_length=%r "
+            "ua=%r xff=%r remote=%r",
+            request.content_type,
+            request.content_length,
+            request.headers.get("User-Agent"),
+            request.headers.get("X-Forwarded-For"),
+            request.remote_addr,
+        )
 
 
 def _get_or_404(item_id: int) -> Picture:
@@ -68,6 +83,15 @@ def get_picture(item_id):
 def download_picture(item_id):
     picture = _get_or_404(item_id)
     path = pictures_service.resolve_path(picture)
+    return send_file(path)
+
+
+@bp.get("/pictures/<int:item_id>/thumbnail")
+def download_picture_thumbnail(item_id):
+    picture = _get_or_404(item_id)
+    # Missing for pictures stored before the derivative existed: the service
+    # generates it from the stored file and records it (lazy backfill).
+    path = pictures_service.resolve_thumbnail_path(picture)
     return send_file(path)
 
 

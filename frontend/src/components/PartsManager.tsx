@@ -23,6 +23,7 @@ import {
 } from '@mui/material'
 import DeleteIcon from '@mui/icons-material/Delete'
 import EditIcon from '@mui/icons-material/Edit'
+import PhotoLibraryIcon from '@mui/icons-material/PhotoLibrary'
 import {
   createServicePart,
   deleteServicePart,
@@ -31,6 +32,7 @@ import {
 } from '../api/equipment'
 import type { ServicePart, ServicePartInput } from '../api/types'
 import { useApi } from '../hooks/useApi'
+import PictureSection from './PictureSection'
 
 type PartDraft = {
   name: string
@@ -84,6 +86,7 @@ function PartsManager({ isRefrigeratorPart }: PartsManagerProps) {
   const [formOpen, setFormOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [toDelete, setToDelete] = useState<ServicePart | null>(null)
+  const [picturesOf, setPicturesOf] = useState<ServicePart | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
 
   function openCreate() {
@@ -181,6 +184,12 @@ function PartsManager({ isRefrigeratorPart }: PartsManagerProps) {
                   <TableCell>{part.notes ?? '—'}</TableCell>
                   <TableCell align="right">
                     <IconButton
+                      aria-label={`Pictures ${part.name ?? 'part'}`}
+                      onClick={() => setPicturesOf(part)}
+                    >
+                      <PhotoLibraryIcon />
+                    </IconButton>
+                    <IconButton
                       aria-label={`Edit ${part.name ?? 'part'}`}
                       onClick={() => openEdit(part)}
                     >
@@ -243,6 +252,11 @@ function PartsManager({ isRefrigeratorPart }: PartsManagerProps) {
               }
             />
           </Stack>
+          {editing && (
+            <Box sx={{ mt: 2 }}>
+              <PictureSection ownerType="spare" ownerId={editing.id} />
+            </Box>
+          )}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setFormOpen(false)}>Cancel</Button>
@@ -250,6 +264,15 @@ function PartsManager({ isRefrigeratorPart }: PartsManagerProps) {
             {saving ? 'Saving…' : 'Save'}
           </Button>
         </DialogActions>
+      </Dialog>
+
+      <Dialog open={picturesOf !== null} onClose={() => setPicturesOf(null)} fullWidth>
+        <DialogTitle>Pictures — {picturesOf?.name ?? 'part'}</DialogTitle>
+        <DialogContent>
+          {picturesOf && (
+            <PictureSection ownerType="spare" ownerId={picturesOf.id} />
+          )}
+        </DialogContent>
       </Dialog>
 
       <Dialog open={toDelete !== null} onClose={() => setToDelete(null)}>

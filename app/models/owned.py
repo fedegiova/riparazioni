@@ -158,12 +158,27 @@ class Picture(db.Model):
     # Relative path under UPLOAD_DIR; the file lives at UPLOAD_DIR / path.
     # Unique: the storage service derives a dated name and retries on collision.
     path = db.Column(db.String(1024), nullable=False, unique=True)
+    # Relative path of the minified derivative under UPLOAD_DIR. Null for
+    # pictures stored before the derivative existed; the storage service
+    # generates it lazily on first read. Unique only among non-null values
+    # (a partial index), since several legacy rows may be null.
+    thumbnail_path = db.Column(db.String(1024))
     # Exactly one owner: 'repair' | 'spare' | 'cylinder' (validated in the
     # service layer). No junction table — a picture is always attached at upload.
     owner_type = db.Column(db.String(16), nullable=False)
     owner_id = db.Column(db.Integer, nullable=False)
     uploaded_by = db.Column(db.String(64))
     uploaded_date = db.Column(db.DateTime, default=_now)
+
+    __table_args__ = (
+        db.Index(
+            "uq_pictures_thumbnail_path",
+            "thumbnail_path",
+            unique=True,
+            sqlite_where=db.text("thumbnail_path IS NOT NULL"),
+            mssql_where=db.text("thumbnail_path IS NOT NULL"),
+        ),
+    )
 
     def to_dict(self) -> dict:
         return {

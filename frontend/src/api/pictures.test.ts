@@ -4,6 +4,7 @@ import {
   deletePicture,
   listPictures,
   pictureFileUrl,
+  pictureThumbnailUrl,
   uploadPicture,
 } from './pictures'
 
@@ -65,6 +66,51 @@ describe('uploadPicture', () => {
     expect(sent.type).toBe('image/jpeg')
   })
 
+  it('falls back to FileReader when arrayBuffer returns no bytes', async () => {
+    apiMock.POST.mockResolvedValue({
+      data: { id: 1, path: 'repair/x.jpg', owner_type: 'repair', owner_id: 1 },
+      response: new Response(),
+    })
+
+    const file = new File(['hello-bytes'], 'a.jpg', { type: 'image/jpeg' })
+    Object.defineProperty(file, 'arrayBuffer', {
+      value: vi.fn().mockResolvedValue(new ArrayBuffer(0)),
+    })
+
+    await uploadPicture(file, 'repair', 1)
+
+    const body = apiMock.POST.mock.calls[0][1].body as FormData
+    const sent = body.get('file') as File
+    expect(await sent.text()).toBe('hello-bytes')
+  })
+
+  it('falls back to FileReader when arrayBuffer throws', async () => {
+    apiMock.POST.mockResolvedValue({
+      data: { id: 1, path: 'repair/x.jpg', owner_type: 'repair', owner_id: 1 },
+      response: new Response(),
+    })
+
+    const file = new File(['hello-bytes'], 'a.jpg', { type: 'image/jpeg' })
+    Object.defineProperty(file, 'arrayBuffer', {
+      value: vi.fn().mockRejectedValue(new Error('cannot read')),
+    })
+
+    await uploadPicture(file, 'repair', 1)
+
+    const body = apiMock.POST.mock.calls[0][1].body as FormData
+    const sent = body.get('file') as File
+    expect(await sent.text()).toBe('hello-bytes')
+  })
+
+  it('rejects when the file cannot be read at all', async () => {
+    const file = new File([], 'empty.jpg', { type: 'image/jpeg' })
+
+    await expect(uploadPicture(file, 'repair', 1)).rejects.toThrow(
+      'The photo could not be read',
+    )
+    expect(apiMock.POST).not.toHaveBeenCalled()
+  })
+
   it('gives the file part a fallback name when the camera file has none', async () => {
     apiMock.POST.mockResolvedValue({
       data: { id: 1, path: 'repair/x.jpg', owner_type: 'repair', owner_id: 1 },
@@ -117,5 +163,11 @@ describe('deletePicture', () => {
 describe('pictureFileUrl', () => {
   it('builds the same-origin download URL', () => {
     expect(pictureFileUrl(7)).toBe('/api/v1/pictures/7/file')
+  })
+})
+
+describe('pictureThumbnailUrl', () => {
+  it('builds the same-origin minified-view URL', () => {
+    expect(pictureThumbnailUrl(7)).toBe('/api/v1/pictures/7/thumbnail')
   })
 })

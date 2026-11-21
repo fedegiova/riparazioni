@@ -25,6 +25,7 @@ import {
 import DeleteIcon from '@mui/icons-material/Delete'
 import EditIcon from '@mui/icons-material/Edit'
 import HistoryIcon from '@mui/icons-material/History'
+import PhotoLibraryIcon from '@mui/icons-material/PhotoLibrary'
 import { useNavigate } from 'react-router-dom'
 import {
   archiveGasCylinder,
@@ -38,6 +39,7 @@ import {
 import { getGasTypes } from '../api/settings'
 import type { GasCylinder, GasCylinderInput } from '../api/types'
 import { useApi } from '../hooks/useApi'
+import PictureSection from './PictureSection'
 
 type CylinderDraft = {
   gas_kind: string
@@ -146,6 +148,7 @@ function CylindersManager() {
   const [formOpen, setFormOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [toDelete, setToDelete] = useState<GasCylinder | null>(null)
+  const [picturesOf, setPicturesOf] = useState<GasCylinder | null>(null)
   const [toRefill, setToRefill] = useState<GasCylinder | null>(null)
   const [refillDate, setRefillDate] = useState(todayIso())
   const [refillReference, setRefillReference] = useState('')
@@ -358,6 +361,12 @@ function CylindersManager() {
                       </Button>
                     )}
                     <IconButton
+                      aria-label={`Pictures ${label(cylinder)}`}
+                      onClick={() => setPicturesOf(cylinder)}
+                    >
+                      <PhotoLibraryIcon />
+                    </IconButton>
+                    <IconButton
                       aria-label={`Delete ${label(cylinder)}`}
                       onClick={() => setToDelete(cylinder)}
                     >
@@ -469,6 +478,11 @@ function CylindersManager() {
               }
             />
           </Stack>
+          {editing && (
+            <Box sx={{ mt: 2 }}>
+              <PictureSection ownerType="cylinder" ownerId={editing.id} />
+            </Box>
+          )}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setFormOpen(false)}>Cancel</Button>
@@ -476,6 +490,17 @@ function CylindersManager() {
             {saving ? 'Saving…' : 'Save'}
           </Button>
         </DialogActions>
+      </Dialog>
+
+      <Dialog open={picturesOf !== null} onClose={() => setPicturesOf(null)} fullWidth>
+        <DialogTitle>
+          Pictures — {picturesOf ? label(picturesOf) : 'cylinder'}
+        </DialogTitle>
+        <DialogContent>
+          {picturesOf && (
+            <PictureSection ownerType="cylinder" ownerId={picturesOf.id} />
+          )}
+        </DialogContent>
       </Dialog>
 
       <Dialog open={toRefill !== null} onClose={() => setToRefill(null)} fullWidth>

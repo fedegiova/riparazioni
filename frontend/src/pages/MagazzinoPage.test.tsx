@@ -47,6 +47,18 @@ vi.mock('../api/settings', () => ({
   getGasTypes: vi.fn().mockResolvedValue([]),
 }))
 
+vi.mock('../api/pictures', () => ({
+  listPictures: vi.fn().mockResolvedValue([]),
+  uploadPicture: vi.fn(),
+  deletePicture: vi.fn(),
+  pictureThumbnailUrl: (id: number) => `/api/v1/pictures/${id}/thumbnail`,
+  pictureFileUrl: (id: number) => `/api/v1/pictures/${id}/file`,
+}))
+
+vi.mock('yet-another-react-lightbox', () => ({
+  default: () => null,
+}))
+
 const regularPart = { id: 1, name: 'Compressor', supplier: 'ACME', kind: 'fridge' }
 const fridgePart = { id: 2, name: 'Thermostat', supplier: 'Cool', kind: 'fridge' }
 

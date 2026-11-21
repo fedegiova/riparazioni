@@ -985,7 +985,7 @@ export interface paths {
                     "multipart/form-data": {
                         /**
                          * Format: binary
-                         * @description The image file (extension is preserved)
+                         * @description The image file; it is decoded and stored resized to a 2880 px longest edge, with a 320 px minified view created alongside it. A file that is not a decodable image is rejected.
                          */
                         file: string;
                         /** @enum {string} */
@@ -1110,6 +1110,48 @@ export interface paths {
                     };
                     content: {
                         "application/octet-stream": string;
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pictures/{picture_id}/thumbnail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download the minified view
+         * @description Serves the picture's minified derivative (longest edge at most 320 px). When a picture has no derivative yet it is generated from the stored file and recorded on first request. The location is resolved only from the stored metadata (path traversal is not possible).
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    picture_id: components["parameters"]["PictureIdParam"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Thumbnail image content */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "image/*": string;
                     };
                 };
                 404: components["responses"]["NotFound"];

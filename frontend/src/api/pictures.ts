@@ -22,16 +22,43 @@ type PictureUploadBody = {
  * into a blob first, which is why it works there). Materializing the bytes
  * first makes the request body an ordinary in-memory blob. The fallback name
  * also covers cameras that send an empty filename.
+ *
+ * Some Firefox-for-Android builds resolve `File.arrayBuffer()` to an empty
+ * buffer (or reject it) for these `content://` files. Returning the original
+ * File in that case would reintroduce the streaming failure, so fall back to
+ * `FileReader` and fail loudly when neither path yields bytes.
  */
-async function materializeFile(file: File): Promise<File> {
+async function readFileBytes(file: File): Promise<ArrayBuffer> {
   try {
     const bytes = await file.arrayBuffer()
-    return new File([bytes], file.name || 'photo.jpg', {
-      type: file.type || 'image/jpeg',
-    })
+    if (bytes.byteLength > 0) return bytes
   } catch {
-    return file
+    // Fall through to FileReader: some Android builds read the content://
+    // stream through FileReader even when arrayBuffer() fails.
   }
+
+  return await new Promise<ArrayBuffer>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = reader.result
+      if (result instanceof ArrayBuffer && result.byteLength > 0) {
+        resolve(result)
+      } else {
+        reject(new Error('The photo could not be read. Please take it again.'))
+      }
+    }
+    reader.onerror = () => {
+      reject(new Error('The photo could not be read. Please take it again.'))
+    }
+    reader.readAsArrayBuffer(file)
+  })
+}
+
+async function materializeFile(file: File): Promise<File> {
+  const bytes = await readFileBytes(file)
+  return new File([bytes], file.name || 'photo.jpg', {
+    type: file.type || 'image/jpeg',
+  })
 }
 
 export async function uploadPicture(
@@ -74,4 +101,9 @@ export async function deletePicture(id: number): Promise<void> {
 /** Same-origin URL that serves the stored file bytes. */
 export function pictureFileUrl(id: number): string {
   return `/api/v1/pictures/${id}/file`
+}
+
+/** Same-origin URL that serves the picture's minified view. */
+export function pictureThumbnailUrl(id: number): string {
+  return `/api/v1/pictures/${id}/thumbnail`
 }
