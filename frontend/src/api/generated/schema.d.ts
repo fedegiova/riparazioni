@@ -406,10 +406,16 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List gas cylinders */
+        /**
+         * List gas cylinders
+         * @description Archived cylinders are hidden unless `?archived=true`.
+         */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description Include archived cylinders when true */
+                    archived?: boolean;
+                };
                 header?: never;
                 path?: never;
                 cookie?: never;
@@ -441,7 +447,7 @@ export interface paths {
             };
             requestBody: {
                 content: {
-                    "application/json": components["schemas"]["GasCylinderInput"];
+                    "application/json": components["schemas"]["GasCylinderCreate"];
                 };
             };
             responses: {
@@ -552,6 +558,170 @@ export interface paths {
                 409: components["responses"]["Conflict"];
             };
         };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/gas-cylinders/{cylinder_id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cylinder_id: components["parameters"]["CylinderIdParam"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Archive a gas cylinder
+         * @description Allowed only when `remaining_weight` is below a quarter of
+         *     `full_weight` (400 otherwise). Archived cylinders are hidden from the
+         *     default list and cannot be recharged until refilled.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    cylinder_id: components["parameters"]["CylinderIdParam"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Archived gas cylinder */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["GasCylinder"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/gas-cylinders/{cylinder_id}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cylinder_id: components["parameters"]["CylinderIdParam"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore an archived gas cylinder
+         * @description Clears the archived flag; the remaining weight is unchanged.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    cylinder_id: components["parameters"]["CylinderIdParam"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Restored gas cylinder */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["GasCylinder"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/gas-cylinders/{cylinder_id}/refills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cylinder_id: components["parameters"]["CylinderIdParam"];
+            };
+            cookie?: never;
+        };
+        /** List refills for a gas cylinder */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    cylinder_id: components["parameters"]["CylinderIdParam"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description List of refills */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Refill"][];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        /**
+         * Record a gas cylinder refill
+         * @description Restores the cylinder to its full weight and clears the archived flag in
+         *     one transaction. A refill is allowed on any cylinder.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    cylinder_id: components["parameters"]["CylinderIdParam"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["RefillInput"];
+                };
+            };
+            responses: {
+                /** @description Created refill */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Refill"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1529,11 +1699,13 @@ export interface components {
             gas_kind?: string;
             serial_nr?: string;
             model?: string;
-            full_weight?: number;
+            full_weight: number;
             remaining_weight?: number;
             /** @description Reference to a picture id */
             picture_ref?: number | null;
             notes?: string;
+            /** @description Retired cylinder; hidden from the default list */
+            archived?: boolean;
         };
         GasCylinderInput: {
             gas_kind?: string;
@@ -1544,6 +1716,22 @@ export interface components {
             remaining_weight?: number;
             picture_ref?: number | null;
             notes?: string;
+        };
+        GasCylinderCreate: components["schemas"]["GasCylinderInput"] & Record<string, never>;
+        Refill: {
+            id: number;
+            gas_cylinder_id: number;
+            /** Format: date */
+            date: string;
+            reference?: string | null;
+        };
+        RefillInput: {
+            /**
+             * Format: date
+             * @description Defaults to today when omitted
+             */
+            date?: string;
+            reference?: string | null;
         };
         ServicePart: {
             id: number;
@@ -1611,6 +1799,8 @@ export interface components {
             delivery_date?: string | null;
             /** @description Sum of the repair's work-log durations, in hours */
             total_hours: number;
+            /** @description Sum of the recharged weights recorded on the repair's work-log entries, in kg */
+            gas_used?: number;
             notes?: string;
         };
         RepairDetail: components["schemas"]["Repair"] & {
@@ -1668,12 +1858,12 @@ export interface components {
              * @description Gas system state of the operation
              * @enum {string|null}
              */
-            gas_system_state?: "VUOTO" | "PIENO" | "RICUPERO_RICARICA" | null;
+            gas_system_state?: "VUOTO" | "PIENO" | "RECUPERO" | "RICUPERO_RICARICA" | null;
             /** @description Cylinder id used for the recharge */
             gas_recharge?: number | null;
             /** @description Kg of gas recharged */
             gas_recharge_weight?: number | null;
-            /** @description Kg of gas recovered (recorded only, does not move any balance) */
+            /** @description Kg of gas recovered; adds to the cylinder balance */
             gas_recovered_weight?: number | null;
         };
         /**
@@ -1687,7 +1877,7 @@ export interface components {
             end_time?: string;
             operator?: string;
             /** @enum {string|null} */
-            gas_system_state?: "VUOTO" | "PIENO" | "RICUPERO_RICARICA" | null;
+            gas_system_state?: "VUOTO" | "PIENO" | "RECUPERO" | "RICUPERO_RICARICA" | null;
             gas_recharge?: number | null;
             gas_recharge_weight?: number | null;
             gas_recovered_weight?: number | null;
@@ -1699,9 +1889,9 @@ export interface components {
         /**
          * @description A setting value as a JSON document. The known settings are `operators`
          *     (array of strings), `working_hours` (weekday name to a list of
-         *     `[HH:MM, HH:MM]` intervals, an empty list meaning closed), and `holidays`
+         *     `[HH:MM, HH:MM]` intervals, an empty list meaning closed), `holidays`
          *     (four-digit year to a list of `{from, to, name}` date ranges within that
-         *     year).
+         *     year), and `gas_types` (array of gas type names).
          */
         SettingsValue: unknown;
     };

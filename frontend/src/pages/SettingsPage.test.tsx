@@ -17,6 +17,7 @@ const YEAR = String(new Date().getFullYear())
 function payload(overrides: Record<string, unknown> = {}) {
   return {
     operators: [],
+    gas_types: [],
     working_hours: {
       mon: [],
       tue: [],
@@ -41,6 +42,7 @@ describe('SettingsPage', () => {
     listSettings.mockResolvedValue(
       payload({
         operators: ['MARIO'],
+        gas_types: ['R410A'],
         working_hours: { mon: [['08:00', '12:00']] },
         holidays: {
           [YEAR]: [{ from: `${YEAR}-01-01`, to: `${YEAR}-01-01`, name: 'Capodanno' }],
@@ -50,6 +52,7 @@ describe('SettingsPage', () => {
     render(<SettingsPage />)
 
     expect(await screen.findByText('MARIO')).toBeTruthy()
+    expect(screen.getByText('R410A')).toBeTruthy()
     expect(screen.getByDisplayValue('08:00')).toBeTruthy()
     expect(screen.getByDisplayValue('Capodanno')).toBeTruthy()
   })
@@ -63,12 +66,43 @@ describe('SettingsPage', () => {
     fireEvent.change(screen.getByLabelText('Add operator'), {
       target: { value: 'LUIGI' },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add' })[0])
     expect(screen.getByText('LUIGI')).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(putSettings).toHaveBeenCalledTimes(1))
     expect(putSettings.mock.calls[0][0].operators).toEqual(['LUIGI'])
+  })
+
+  it('adds a gas type and saves it', async () => {
+    listSettings.mockResolvedValue(payload())
+    putSettings.mockResolvedValue(payload())
+    render(<SettingsPage />)
+    await screen.findByText('No gas types.')
+
+    fireEvent.change(screen.getByLabelText('Add gas type'), {
+      target: { value: 'R32' },
+    })
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add' })[1])
+    expect(screen.getByText('R32')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(putSettings).toHaveBeenCalledTimes(1))
+    expect(putSettings.mock.calls[0][0].gas_types).toEqual(['R32'])
+  })
+
+  it('removes a gas type and saves it', async () => {
+    listSettings.mockResolvedValue(payload({ gas_types: ['R410A'] }))
+    putSettings.mockResolvedValue(payload())
+    render(<SettingsPage />)
+    await screen.findByText('R410A')
+
+    fireEvent.click(screen.getByTestId('CancelIcon'))
+    expect(screen.queryByText('R410A')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(putSettings).toHaveBeenCalledTimes(1))
+    expect(putSettings.mock.calls[0][0].gas_types).toEqual([])
   })
 
   it('edits working hours and saves them', async () => {

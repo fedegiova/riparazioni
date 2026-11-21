@@ -33,6 +33,7 @@ _DEFAULT_FACTORIES = {
     "operators": list,
     "working_hours": _empty_working_hours,
     "holidays": dict,
+    "gas_types": list,
 }
 
 
@@ -47,6 +48,13 @@ def _validate_operators(value) -> None:
         isinstance(item, str) and item for item in value
     ):
         raise BadRequest("operators must be a list of non-empty strings")
+
+
+def _validate_gas_types(value) -> None:
+    if not isinstance(value, list) or not all(
+        isinstance(item, str) and item for item in value
+    ):
+        raise BadRequest("gas_types must be a list of non-empty strings")
 
 
 def _validate_working_hours(value) -> None:
@@ -108,6 +116,7 @@ _VALIDATORS = {
     "operators": _validate_operators,
     "working_hours": _validate_working_hours,
     "holidays": _validate_holidays,
+    "gas_types": _validate_gas_types,
 }
 
 

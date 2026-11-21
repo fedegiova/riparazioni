@@ -1,10 +1,12 @@
 """Model and registry tests (task group 1)."""
 
 from app.models import (
+    GAS_SYSTEM_STATES,
     AppUser,
     Customer,
     GasCylinder,
     Picture,
+    Refill,
     Refrigerator,
     RepairPart,
     Repairs,
@@ -23,6 +25,7 @@ def test_owned_models_are_registered(app):
         RepairPart: "REPAIR_PARTS",
         Refrigerator: "REFRIGERATORS",
         GasCylinder: "GAS_CYLINDERS",
+        Refill: "REFILLS",
         ServicePart: "SERVICE_PARTS",
         Picture: "PICTURES",
         Settings: "SETTINGS",
@@ -32,6 +35,24 @@ def test_owned_models_are_registered(app):
         assert model.__table__.schema is None, (
             f"{table_name} must live in the default schema (it is migrated)"
         )
+
+
+def test_gas_cylinder_lifecycle_fields(app):
+    """Cylinders carry an archived flag and a required full weight (task 1.1)."""
+    columns = {c.name: c for c in GasCylinder.__table__.columns}
+    assert "archived" in columns
+    assert columns["archived"].nullable is False
+    assert columns["full_weight"].nullable is False
+    assert "RECUPERO" in GAS_SYSTEM_STATES
+    assert "RICUPERO_RICARICA" in GAS_SYSTEM_STATES
+
+
+def test_refill_columns(app):
+    """Refills store the cylinder, date and reference (task 1.1)."""
+    columns = {c.name for c in Refill.__table__.columns}
+    assert {"id", "gas_cylinder_id", "date", "reference"} <= columns
+    fks = list(Refill.__table__.columns["gas_cylinder_id"].foreign_keys)
+    assert fks and fks[0].column.table.name == "GAS_CYLINDERS"
 
 
 def test_external_models_map_legacy_tables(app):

@@ -17,12 +17,13 @@ import SearchIcon from '@mui/icons-material/Search'
 import { useNavigate, useParams } from 'react-router-dom'
 import { listGasCylinders } from '../api/equipment'
 import { addWorkLog, getRepair, updateWorkLog } from '../api/repairs'
+import { getOperators } from '../api/settings'
 import type { WorkLogInput } from '../api/types'
 import SearchModal from '../components/SearchModal'
 import { useApi } from '../hooks/useApi'
 import { toDateTimeInput, nowDateTimeInput, toIso } from '../lib/format'
 
-type GasState = 'VUOTO' | 'PIENO' | 'RICUPERO_RICARICA'
+type GasState = 'VUOTO' | 'PIENO' | 'RECUPERO' | 'RICUPERO_RICARICA'
 
 function WorkLogPage() {
   const navigate = useNavigate()
@@ -38,6 +39,7 @@ function WorkLogPage() {
   const [startTime, setStartTime] = useState(nowDateTimeInput)
   const [endTime, setEndTime] = useState('')
   const [operator, setOperator] = useState('')
+  const [operators, setOperators] = useState<string[]>([])
   const [gasOn, setGasOn] = useState(false)
   const [gasState, setGasState] = useState<'' | GasState>('')
   const [cylinder, setCylinder] = useState<{ id: number; label: string } | null>(null)
@@ -74,6 +76,20 @@ function WorkLogPage() {
     )
   }, [isNew, repair, entryId])
 
+  useEffect(() => {
+    let active = true
+    getOperators()
+      .then((names) => {
+        if (active) setOperators(names)
+      })
+      .catch(() => {
+        // Fall back to a free-text field when settings are unavailable.
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
   async function handleSave() {
     setSaving(true)
     setActionError(null)
@@ -105,6 +121,12 @@ function WorkLogPage() {
   if (loading) return <CircularProgress />
 
   if (loadError) return <Alert severity="error">{loadError}</Alert>
+
+  // Keep an entry's stored operator selectable even when it is not in settings.
+  const operatorOptions =
+    operator && !operators.includes(operator)
+      ? [...operators, operator]
+      : operators
 
   return (
     <Box>
@@ -138,12 +160,34 @@ function WorkLogPage() {
               slotProps={{ inputLabel: { shrink: true } }}
             />
           </Stack>
-          <TextField
-            label="Operator"
-            value={operator}
-            onChange={(event) => setOperator(event.target.value)}
-            fullWidth
-          />
+          {operators.length > 0 ? (
+            <FormControl fullWidth>
+              <InputLabel id="operator-label" shrink>
+                Operator
+              </InputLabel>
+              <Select
+                labelId="operator-label"
+                label="Operator"
+                displayEmpty
+                value={operator}
+                onChange={(event) => setOperator(event.target.value)}
+              >
+                <MenuItem value="">None</MenuItem>
+                {operatorOptions.map((name) => (
+                  <MenuItem key={name} value={name}>
+                    {name}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          ) : (
+            <TextField
+              label="Operator"
+              value={operator}
+              onChange={(event) => setOperator(event.target.value)}
+              fullWidth
+            />
+          )}
 
           <Box>
             <Button
@@ -166,6 +210,7 @@ function WorkLogPage() {
                 >
                   <MenuItem value="VUOTO">VUOTO</MenuItem>
                   <MenuItem value="PIENO">PIENO</MenuItem>
+                  <MenuItem value="RECUPERO">RECUPERO</MenuItem>
                   <MenuItem value="RICUPERO_RICARICA">RICUPERO_RICARICA</MenuItem>
                 </Select>
               </FormControl>

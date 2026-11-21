@@ -125,76 +125,120 @@ def _parse_work_log_gas(data: dict) -> dict:
 def _validate_gas(entry, state, cylinder_id, weight, recovered) -> None:
     """Read-only validation of a gas dataset.
 
-    *entry* is the existing entry being updated, or None for a new one.
+    *entry* is the existing entry being updated, or None for a new entry.
+
+    Field matrix::
+
+        state               cylinder   recharge        recovered
+        VUOTO               required   required (>0)    forbidden
+        PIENO               forbidden  forbidden       forbidden
+        RECUPERO            required   forbidden       required (>=0)
+        RICUPERO_RICARICA   required   required (>0)    required (>=0)
     """
     has_cylinder = cylinder_id is not None
     has_weight = weight is not None
-
-    if has_cylinder != has_weight:
-        raise BadRequest(
-            "a gas recharge needs both gas_recharge (cylinder) and gas_recharge_weight"
-        )
+    has_recovered = recovered is not None
 
     if state is not None and state not in GAS_SYSTEM_STATES:
         raise BadRequest(f"gas_system_state must be one of {', '.join(GAS_SYSTEM_STATES)}")
 
-    # A full system stores no gas data at all.
-    if state == "PIENO" and (has_cylinder or has_weight or recovered is not None):
-        raise BadRequest("PIENO entries must not carry cylinder or weight data")
-
     # Any entry carrying gas data must declare the system state.
-    if state is None and (has_cylinder or recovered is not None):
-        raise BadRequest("an entry carrying gas data requires a gas_system_state")
-
-    if not has_cylinder:
+    if state is None:
+        if has_cylinder or has_weight or has_recovered:
+            raise BadRequest("an entry carrying gas data requires a gas_system_state")
         return
 
-    if not isinstance(weight, (int, float)) or isinstance(weight, bool) or weight <= 0:
-        raise BadRequest("gas_recharge_weight must be a positive number")
-    if recovered is not None and (
-        not isinstance(recovered, (int, float)) or isinstance(recovered, bool) or recovered < 0
-    ):
-        raise BadRequest("gas_recovered_weight must be a non-negative number")
+    # A full system stores no gas data at all.
+    if state == "PIENO":
+        if has_cylinder or has_weight or has_recovered:
+            raise BadRequest("PIENO entries must not carry cylinder or weight data")
+        return
+
+    # Every other state moves gas through a cylinder.
+    if not has_cylinder:
+        raise BadRequest(f"{state} entries require a gas_recharge cylinder")
+
+    if state in ("VUOTO", "RICUPERO_RICARICA"):
+        if not has_weight:
+            raise BadRequest(
+                f"{state} entries require a positive gas_recharge_weight"
+            )
+        if not isinstance(weight, (int, float)) or isinstance(weight, bool) or weight <= 0:
+            raise BadRequest("gas_recharge_weight must be a positive number")
+    elif has_weight:  # RECUPERO
+        raise BadRequest("RECUPERO entries must not carry a gas_recharge_weight")
+
+    if state in ("RECUPERO", "RICUPERO_RICARICA"):
+        if not has_recovered:
+            raise BadRequest(f"{state} entries require a gas_recovered_weight")
+        if (
+            not isinstance(recovered, (int, float))
+            or isinstance(recovered, bool)
+            or recovered < 0
+        ):
+            raise BadRequest("gas_recovered_weight must be a non-negative number")
+    elif has_recovered:  # VUOTO
+        raise BadRequest("VUOTO entries must not carry a gas_recovered_weight")
 
     cylinder = db.session.get(GasCylinder, cylinder_id)
     if cylinder is None:
         raise Conflict(f"cylinder {cylinder_id} does not exist")
 
-    # An update of an entry that already draws from this cylinder must count
-    # the old draw back in before checking the new draw.
+    # An update of an entry that already moved gas through this cylinder must
+    # reverse the old movement before checking the new one.
     effective = cylinder.remaining_weight or 0.0
     if (
         entry is not None
         and entry.id is not None
         and entry.gas_recharge == cylinder.id
-        and entry.gas_recharge_weight
     ):
-        effective += entry.gas_recharge_weight
-    if effective - weight < 0:
+        effective += (entry.gas_recharge_weight or 0.0) - (
+            entry.gas_recovered_weight or 0.0
+        )
+
+    result = effective + (recovered or 0.0) - (weight or 0.0)
+    if result < 0:
         raise BadRequest(
             f"cannot recharge {weight} from cylinder {cylinder_id}: only {effective} available"
+        )
+    if result > cylinder.full_weight:
+        raise BadRequest(
+            f"recovering {recovered} would exceed cylinder {cylinder_id} "
+            f"full weight {cylinder.full_weight}"
         )
 
 
 def _apply_gas(entry: RepairWorkLog, state, cylinder_id, weight, recovered) -> None:
-    """Apply an already-validated gas dataset (mutation only)."""
-    _restore_recharge(entry)
+    """Apply an already-validated gas dataset (mutation only).
+
+    A recovered weight adds to the cylinder balance and a recharged weight
+    subtracts from it; the two are stored independently.
+    """
+    _reverse_gas(entry)
     entry.gas_system_state = state
     entry.gas_recharge = cylinder_id
     entry.gas_recharge_weight = weight if cylinder_id is not None else None
     entry.gas_recovered_weight = recovered
     if cylinder_id is not None:
         cylinder = db.session.get(GasCylinder, cylinder_id)
-        cylinder.remaining_weight = (cylinder.remaining_weight or 0.0) - weight
+        cylinder.remaining_weight = (
+            (cylinder.remaining_weight or 0.0)
+            + (recovered or 0.0)
+            - (weight or 0.0)
+        )
 
 
-def _restore_recharge(entry: RepairWorkLog) -> None:
-    """Give back the recharged weight when its work-log entry goes away."""
-    if entry.gas_recharge is None or entry.gas_recharge_weight is None:
+def _reverse_gas(entry: RepairWorkLog) -> None:
+    """Undo the entry's gas movement when it is updated or removed."""
+    if entry.gas_recharge is None:
         return
     cylinder = db.session.get(GasCylinder, entry.gas_recharge)
     if cylinder is not None:
-        cylinder.remaining_weight = (cylinder.remaining_weight or 0.0) + entry.gas_recharge_weight
+        cylinder.remaining_weight = (
+            (cylinder.remaining_weight or 0.0)
+            + (entry.gas_recharge_weight or 0.0)
+            - (entry.gas_recovered_weight or 0.0)
+        )
 
 
 # --- read-time computed fields ----------------------------------------------------
@@ -218,23 +262,28 @@ def _resolve_customer_names(customer_ids: set) -> dict:
 
 
 def _decorate_repairs(repairs: list[Repairs]) -> None:
-    """Attach `total_hours` and `customer_name` to repairs before serialization.
+    """Attach computed fields to repairs before serialization.
 
-    A single query loads the work-log durations of every listed repair (no
-    per-repair query); customer names are resolved for the distinct ids in
-    one lookup. Unknown customer ids resolve to a null name.
+    A single query loads the work-log durations and recharged weights of every
+    listed repair (no per-repair query); customer names are resolved for the
+    distinct ids in one lookup. Unknown customer ids resolve to a null name.
     """
     ids = [repair.id for repair in repairs]
     hours: dict[int, float] = {}
+    gas: dict[int, float] = {}
     if ids:
         entries = db.session.execute(
             db.select(RepairWorkLog).where(RepairWorkLog.id_repairs.in_(ids))
         ).scalars()
         for entry in entries:
             hours[entry.id_repairs] = hours.get(entry.id_repairs, 0.0) + _duration_hours(entry)
+            gas[entry.id_repairs] = gas.get(entry.id_repairs, 0.0) + (
+                entry.gas_recharge_weight or 0.0
+            )
     names = _resolve_customer_names({repair.customer for repair in repairs})
     for repair in repairs:
         repair.total_hours = hours.get(repair.id, 0.0)
+        repair.gas_used = gas.get(repair.id, 0.0)
         repair.customer_name = names.get(repair.customer)
 
 
@@ -315,14 +364,14 @@ def update_repair(repair: Repairs, data: dict) -> Repairs:
 
 
 def delete_repair(repair: Repairs) -> None:
-    """Delete a repair, restoring cylinder balances of its recharges first.
+    """Delete a repair, reversing its gas movements on the cylinders first.
 
     The ORM cascade removes the work-log entries and part rows; the balance
-    restore must happen before that, since each deleted entry that recorded
-    a recharge must give its weight back to the cylinder (same transaction).
+    restore must happen before that, since each deleted entry that moved gas
+    must be undone on its cylinder (same transaction).
     """
     for entry in repair.work_log:
-        _restore_recharge(entry)
+        _reverse_gas(entry)
     db.session.delete(repair)
 
 
@@ -386,7 +435,7 @@ def update_work_log_entry(entry: RepairWorkLog, data: dict) -> RepairWorkLog:
 
 
 def delete_work_log_entry(entry: RepairWorkLog) -> None:
-    _restore_recharge(entry)
+    _reverse_gas(entry)
     db.session.delete(entry)
 
 
@@ -402,6 +451,7 @@ EXPORT_COLUMNS = (
     "end_data",
     "delivery_date",
     "total_hours",
+    "gas_used",
     "notes",
 )
 
@@ -427,6 +477,7 @@ def export_repairs_xlsx(repairs: list[Repairs]) -> bytes:
                 repair.end_data.isoformat() if repair.end_data else None,
                 repair.delivery_date.isoformat() if repair.delivery_date else None,
                 repair.total_hours,
+                repair.gas_used,
                 repair.notes,
             ]
         )

@@ -28,6 +28,7 @@ class TestReads:
             "sun": [],
         }
         assert body["holidays"] == {}
+        assert body["gas_types"] == []
 
     def test_read_known_setting_default(self, client, db):
         response = client.get("/api/v1/settings/operators")
@@ -38,6 +39,11 @@ class TestReads:
         response = client.get("/api/v1/settings/nope")
         assert response.status_code == 404
         assert set(response.get_json()) == {"error"}
+
+    def test_unwritten_gas_types_reads_empty(self, client, db):
+        response = client.get("/api/v1/settings/gas_types")
+        assert response.status_code == 200
+        assert response.get_json() == []
 
 
 # --- 2.2 writes --------------------------------------------------------------
@@ -66,6 +72,15 @@ class TestWrites:
         body = client.get("/api/v1/settings").get_json()
         assert body["operators"] == ["ANNA"]
         assert body["holidays"]["2026"][0]["name"] == "Capodanno"
+
+    def test_gas_types_round_trip(self, client, db):
+        response = _put(client, "gas_types", ["R410A", "R134a"])
+        assert response.status_code == 200
+        assert response.get_json() == ["R410A", "R134a"]
+        assert client.get("/api/v1/settings/gas_types").get_json() == [
+            "R410A",
+            "R134a",
+        ]
 
     def test_unknown_setting_accepts_any_json(self, client, db):
         response = _put(client, "custom", {"anything": [1, 2, 3]})
@@ -97,6 +112,11 @@ class TestValidation:
 
     def test_accept_valid_operators(self, client, db):
         assert _put(client, "operators", ["MARIO", "LUIGI"]).status_code == 200
+
+    def test_reject_invalid_gas_types(self, client, db):
+        response = _put(client, "gas_types", ["R410A", 42])
+        assert response.status_code == 400
+        assert client.get("/api/v1/settings/gas_types").get_json() == []
 
     def test_reject_unknown_weekday(self, client, db):
         response = _put(client, "working_hours", {"funday": []})

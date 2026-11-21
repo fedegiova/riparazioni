@@ -21,6 +21,7 @@ OWNED_TABLES = {
     "PICTURES",
     "REFRIGERATORS",
     "GAS_CYLINDERS",
+    "REFILLS",
     "REPAIRS",
     "SERVICE_PARTS",
     "REPAIR_PARTS",
@@ -61,6 +62,15 @@ def test_migration_upgrade_and_downgrade(tmp_path):
         columns = {column["name"] for column in inspector.get_columns("REPAIRS")}
         assert "delivery_date" in columns, columns
         assert "type" not in columns, columns
+
+        # Schema delta: cylinders gain the archive flag and a required weight.
+        cylinder_columns = {
+            column["name"]: column
+            for column in inspector.get_columns("GAS_CYLINDERS")
+        }
+        assert "archived" in cylinder_columns, cylinder_columns
+        assert cylinder_columns["archived"]["nullable"] is False
+        assert cylinder_columns["full_weight"]["nullable"] is False
 
         # Rolling back one revision restores the pre-change shape.
         command.downgrade(cfg, "051870300b7a")

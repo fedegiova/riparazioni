@@ -6,10 +6,12 @@ API IntegrityError handler renders it as a conflict (same behavior on
 SQLite tests and on MSSQL in production).
 """
 
+from datetime import date as date_cls
+
 from flask import jsonify, request
 
 from app.extensions import db
-from app.models import GasCylinder, Refrigerator, ServicePart
+from app.models import GasCylinder, Refill, Refrigerator, ServicePart
 from app.routes.api import bp
 from app.services.errors import BadRequest, NotFound
 
@@ -89,19 +91,36 @@ CYLINDER_FIELDS = (
 )
 
 
+def _validate_full_weight(data: dict, *, required: bool) -> None:
+    """Full weight is mandatory on create and may not be nulled on update."""
+    if "full_weight" not in data:
+        if required:
+            raise BadRequest("full_weight is required")
+        return
+    value = data["full_weight"]
+    if value is None:
+        raise BadRequest("full_weight is required")
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise BadRequest("full_weight must be a number")
+
+
 @bp.get("/gas-cylinders")
 def list_gas_cylinders():
-    items = (
-        db.session.execute(db.select(GasCylinder).order_by(GasCylinder.id))
-        .scalars()
-        .all()
+    query = db.select(GasCylinder).order_by(GasCylinder.id)
+    raw_archived = request.args.get("archived")
+    include_archived = raw_archived not in (None, "") and _parse_bool_flag(
+        raw_archived, "archived"
     )
+    if not include_archived:
+        query = query.where(GasCylinder.archived.is_(False))
+    items = db.session.execute(query).scalars().all()
     return jsonify([item.to_dict() for item in items])
 
 
 @bp.post("/gas-cylinders")
 def create_gas_cylinder():
     data = _json_body()
+    _validate_full_weight(data, required=True)
     item = GasCylinder(**{k: data.get(k) for k in CYLINDER_FIELDS})
     # A brand-new cylinder starts full.
     if item.remaining_weight is None and item.full_weight is not None:
@@ -120,6 +139,7 @@ def get_gas_cylinder(item_id):
 def update_gas_cylinder(item_id):
     item = _get_or_404(GasCylinder, item_id)
     data = _json_body()
+    _validate_full_weight(data, required=False)
     for key in CYLINDER_FIELDS:
         if key in data:
             setattr(item, key, data[key])
@@ -133,6 +153,70 @@ def delete_gas_cylinder(item_id):
     db.session.delete(item)
     db.session.commit()
     return "", 204
+
+
+@bp.post("/gas-cylinders/<int:item_id>/archive")
+def archive_gas_cylinder(item_id):
+    """Retire a cylinder that is below one quarter of its full weight."""
+    item = _get_or_404(GasCylinder, item_id)
+    if not item.archived:
+        remaining = item.remaining_weight or 0.0
+        if remaining >= item.full_weight / 4:
+            raise BadRequest(
+                "a cylinder can only be archived when its remaining weight "
+                "is below one quarter of its full weight"
+            )
+        item.archived = True
+        db.session.commit()
+    return jsonify(item.to_dict())
+
+
+@bp.post("/gas-cylinders/<int:item_id>/restore")
+def restore_gas_cylinder(item_id):
+    """Bring an archived cylinder back; its balance is left untouched."""
+    item = _get_or_404(GasCylinder, item_id)
+    if item.archived:
+        item.archived = False
+        db.session.commit()
+    return jsonify(item.to_dict())
+
+
+def _parse_refill_date(value):
+    if value is None:
+        return date_cls.today()
+    if not isinstance(value, str):
+        raise BadRequest("date must be an ISO 8601 date")
+    try:
+        return date_cls.fromisoformat(value)
+    except ValueError:
+        raise BadRequest("date must be an ISO 8601 date") from None
+
+
+@bp.get("/gas-cylinders/<int:item_id>/refills")
+def list_gas_cylinder_refills(item_id):
+    cylinder = _get_or_404(GasCylinder, item_id)
+    refills = sorted(cylinder.refills, key=lambda refill: (refill.date, refill.id))
+    return jsonify([refill.to_dict() for refill in refills])
+
+
+@bp.post("/gas-cylinders/<int:item_id>/refills")
+def create_gas_cylinder_refill(item_id):
+    """Record a refill: the cylinder comes back full and is unarchived."""
+    cylinder = _get_or_404(GasCylinder, item_id)
+    data = _json_body()
+    reference = data.get("reference")
+    if reference is not None and not isinstance(reference, str):
+        raise BadRequest("reference must be a string")
+    refill = Refill(
+        gas_cylinder_id=cylinder.id,
+        date=_parse_refill_date(data.get("date")),
+        reference=reference,
+    )
+    cylinder.remaining_weight = cylinder.full_weight
+    cylinder.archived = False
+    db.session.add(refill)
+    db.session.commit()
+    return jsonify(refill.to_dict()), 201
 
 
 # --- Service parts -----------------------------------------------------------

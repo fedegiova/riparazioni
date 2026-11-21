@@ -115,7 +115,14 @@ file), `405` (writes to read-only resources), `409` (referential conflict).
 
 - `GET/POST /api/v1/refrigerators`, `GET/PUT/DELETE /api/v1/refrigerators/<id>`
 - `GET/POST /api/v1/gas-cylinders`, `GET/PUT/DELETE /api/v1/gas-cylinders/<id>`
-  — on create, `remaining_weight` defaults to `full_weight` when omitted
+  — `full_weight` is required; on create, `remaining_weight` defaults to
+  `full_weight` when omitted; the list hides archived cylinders unless
+  `?archived=true`
+- `POST /api/v1/gas-cylinders/<id>/archive`, `POST /api/v1/gas-cylinders/<id>/restore`
+  — archive only when `remaining_weight < full_weight / 4`; restoring leaves
+  the balance unchanged
+- `GET/POST /api/v1/gas-cylinders/<id>/refills` — a refill (date, optional
+  reference) restores the cylinder to its full weight and unarchives it
 - `GET/POST /api/v1/service-parts`, `GET/PUT/DELETE /api/v1/service-parts/<id>`
   — list filter: `?is_refrigerator_part=true|false`
 
@@ -142,11 +149,12 @@ keeps the relative path.
   `start_date_to` (ISO 8601)
 - `POST /api/v1/repairs` — create; body: `type` (required), `customer`,
   `vehicle`, `refrigerator`, `start_data`, `notes`, `parts`
-- `GET /api/v1/repairs/<id>` — detail, includes `work_log` and `parts`
+- `GET /api/v1/repairs/<id>` — detail, includes `work_log`, `parts`, and the
+  computed `total_hours` and `gas_used` (sum of recharged weights)
 - `PUT /api/v1/repairs/<id>` — update; set `end_data` to complete, `null` to
   reopen; `parts` (when present) replaces the full part set
 - `DELETE /api/v1/repairs/<id>` — delete; removes work log + parts and
-  restores any cylinder balances recorded on its recharges
+  reverses its gas movements on the cylinders
 
 `customer`/`vehicle` are validated against the legacy reference data
 (409 when unknown — no DB FK exists, `VICLIENTI` is a view).
@@ -161,19 +169,22 @@ keeps the relative path.
   `operator` (ISO 8601), plus optional gas fields
 - `PUT /api/v1/repairs/<id>/work-log/<entry_id>` — update (gas fields, when
   present, replace the entry's whole gas dataset and re-apply the balance)
-- `DELETE /api/v1/repairs/<id>/work-log/<entry_id>` — delete; restores the
-  cylinder balance when the entry recorded a recharge
+- `DELETE /api/v1/repairs/<id>/work-log/<entry_id>` — delete; reverses the
+  entry's gas movements on the cylinder
 
-**Gas fields**: `gas_system_state` (`VUOTO` | `PIENO` |
+**Gas fields**: `gas_system_state` (`VUOTO` | `PIENO` | `RECUPERO` |
 `RICUPERO_RICARICA`), `gas_recharge` (cylinder id),
 `gas_recharge_weight` (float, kg), `gas_recovered_weight` (float, kg).
 
-Recharge rules: a recharge needs both `gas_recharge` and
-`gas_recharge_weight` (400 otherwise); a `RIPA_FRIGO` entry carrying gas
-data needs `gas_system_state`; `PIENO` must not carry gas data; recharging
-more than the cylinder's remaining weight is rejected (400); the balance is
-decreased in the same transaction as the entry and restored when the entry
-(or its parent repair) is deleted.
+Gas rules: a recharge (`VUOTO`, `RICUPERO_RICARICA`) needs both
+`gas_recharge` and a positive `gas_recharge_weight`; a recovery (`RECUPERO`,
+`RICUPERO_RICARICA`) needs `gas_recharge` and a non-negative
+`gas_recovered_weight`; `PIENO` carries no gas data; any gas data requires
+`gas_system_state`. Recovered and recharged weights are stored independently:
+recovery adds to the cylinder balance and recharge subtracts from it. A
+movement that would take the balance below zero or above the cylinder's full
+weight is rejected (400). The balance is updated in the same transaction as
+the entry and reversed when the entry (or its parent repair) is deleted.
 
 ### Settings
 

@@ -60,6 +60,22 @@ class TestRefrigerators:
 
 
 class TestGasCylinders:
+    def test_create_without_full_weight_rejected(self, client, db):
+        response = client.post(
+            "/api/v1/gas-cylinders", json={"gas_kind": "R134a"}
+        )
+        assert response.status_code == 400
+        assert "full_weight" in response.get_json()["error"]
+
+    def test_update_to_null_full_weight_rejected(self, client, db):
+        created = client.post(
+            "/api/v1/gas-cylinders", json={"full_weight": 10.0}
+        ).get_json()
+        response = client.put(
+            f"/api/v1/gas-cylinders/{created['id']}", json={"full_weight": None}
+        )
+        assert response.status_code == 400
+
     def test_create_defaults_remaining_to_full(self, client, db):
         response = client.post(
             "/api/v1/gas-cylinders",
@@ -78,19 +94,23 @@ class TestGasCylinders:
         assert response.get_json()["remaining_weight"] == 4.0
 
     def test_list(self, client, db):
-        client.post("/api/v1/gas-cylinders", json={"gas_kind": "A"})
-        client.post("/api/v1/gas-cylinders", json={"gas_kind": "B"})
+        client.post("/api/v1/gas-cylinders", json={"gas_kind": "A", "full_weight": 10.0})
+        client.post("/api/v1/gas-cylinders", json={"gas_kind": "B", "full_weight": 10.0})
         response = client.get("/api/v1/gas-cylinders")
         assert response.status_code == 200
         assert len(response.get_json()) == 2
 
     def test_detail_and_unknown(self, client, db):
-        created = client.post("/api/v1/gas-cylinders", json={"gas_kind": "R134a"}).get_json()
+        created = client.post(
+            "/api/v1/gas-cylinders", json={"gas_kind": "R134a", "full_weight": 10.0}
+        ).get_json()
         assert client.get(f"/api/v1/gas-cylinders/{created['id']}").status_code == 200
         assert client.get("/api/v1/gas-cylinders/99999").status_code == 404
 
     def test_update(self, client, db):
-        created = client.post("/api/v1/gas-cylinders", json={}).get_json()
+        created = client.post(
+            "/api/v1/gas-cylinders", json={"full_weight": 10.0}
+        ).get_json()
         response = client.put(
             f"/api/v1/gas-cylinders/{created['id']}", json={"gas_kind": "R290"}
         )
@@ -98,12 +118,16 @@ class TestGasCylinders:
         assert response.get_json()["gas_kind"] == "R290"
 
     def test_delete_unreferenced(self, client, db):
-        created = client.post("/api/v1/gas-cylinders", json={}).get_json()
+        created = client.post(
+            "/api/v1/gas-cylinders", json={"full_weight": 10.0}
+        ).get_json()
         assert client.delete(f"/api/v1/gas-cylinders/{created['id']}").status_code == 204
         assert client.get(f"/api/v1/gas-cylinders/{created['id']}").status_code == 404
 
     def test_delete_referenced_conflict(self, client, db):
-        created = client.post("/api/v1/gas-cylinders", json={}).get_json()
+        created = client.post(
+            "/api/v1/gas-cylinders", json={"full_weight": 10.0}
+        ).get_json()
         repair_id = _new_repair(db)
         entry = RepairWorkLog(
             id_repairs=repair_id, gas_recharge=created["id"], gas_recharge_weight=1.0
@@ -112,6 +136,97 @@ class TestGasCylinders:
         db.session.commit()
         response = client.delete(f"/api/v1/gas-cylinders/{created['id']}")
         assert response.status_code == 409
+
+    def test_archive_below_quarter(self, client, db):
+        created = client.post(
+            "/api/v1/gas-cylinders",
+            json={"full_weight": 10.0, "remaining_weight": 2.0},
+        ).get_json()
+        response = client.post(f"/api/v1/gas-cylinders/{created['id']}/archive")
+        assert response.status_code == 200
+        payload = response.get_json()
+        assert payload["archived"] is True
+        assert payload["remaining_weight"] == 2.0
+
+    def test_archive_at_or_above_quarter_rejected(self, client, db):
+        created = client.post(
+            "/api/v1/gas-cylinders",
+            json={"full_weight": 10.0, "remaining_weight": 2.5},
+        ).get_json()
+        response = client.post(f"/api/v1/gas-cylinders/{created['id']}/archive")
+        assert response.status_code == 400
+        assert client.get(f"/api/v1/gas-cylinders/{created['id']}").get_json()[
+            "archived"
+        ] is False
+
+    def test_restore_keeps_balance(self, client, db):
+        created = client.post(
+            "/api/v1/gas-cylinders",
+            json={"full_weight": 10.0, "remaining_weight": 2.0},
+        ).get_json()
+        client.post(f"/api/v1/gas-cylinders/{created['id']}/archive")
+        response = client.post(f"/api/v1/gas-cylinders/{created['id']}/restore")
+        assert response.status_code == 200
+        payload = response.get_json()
+        assert payload["archived"] is False
+        assert payload["remaining_weight"] == 2.0
+
+    def test_refill_restores_full_weight(self, client, db):
+        created = client.post(
+            "/api/v1/gas-cylinders",
+            json={"full_weight": 10.0, "remaining_weight": 2.0},
+        ).get_json()
+        response = client.post(
+            f"/api/v1/gas-cylinders/{created['id']}/refills",
+            json={"date": "2026-02-01", "reference": "RIF-1"},
+        )
+        assert response.status_code == 201
+        cylinder = client.get(f"/api/v1/gas-cylinders/{created['id']}").get_json()
+        assert cylinder["remaining_weight"] == 10.0
+
+    def test_refill_unarchives_cylinder(self, client, db):
+        created = client.post(
+            "/api/v1/gas-cylinders",
+            json={"full_weight": 10.0, "remaining_weight": 2.0},
+        ).get_json()
+        client.post(f"/api/v1/gas-cylinders/{created['id']}/archive")
+        client.post(f"/api/v1/gas-cylinders/{created['id']}/refills", json={})
+        cylinder = client.get(f"/api/v1/gas-cylinders/{created['id']}").get_json()
+        assert cylinder["archived"] is False
+
+    def test_refills_are_listed(self, client, db):
+        created = client.post(
+            "/api/v1/gas-cylinders", json={"full_weight": 10.0}
+        ).get_json()
+        client.post(
+            f"/api/v1/gas-cylinders/{created['id']}/refills",
+            json={"date": "2026-02-01", "reference": "RIF-1"},
+        )
+        response = client.get(f"/api/v1/gas-cylinders/{created['id']}/refills")
+        assert response.status_code == 200
+        refills = response.get_json()
+        assert len(refills) == 1
+        assert refills[0]["date"] == "2026-02-01"
+        assert refills[0]["reference"] == "RIF-1"
+
+    def test_archived_cylinders_hidden_by_default(self, client, db):
+        active = client.post(
+            "/api/v1/gas-cylinders", json={"full_weight": 10.0}
+        ).get_json()
+        to_archive = client.post(
+            "/api/v1/gas-cylinders",
+            json={"full_weight": 10.0, "remaining_weight": 2.0},
+        ).get_json()
+        client.post(f"/api/v1/gas-cylinders/{to_archive['id']}/archive")
+
+        default = client.get("/api/v1/gas-cylinders").get_json()
+        assert [cylinder["id"] for cylinder in default] == [active["id"]]
+
+        all_items = client.get("/api/v1/gas-cylinders?archived=true").get_json()
+        assert {cylinder["id"] for cylinder in all_items} == {
+            active["id"],
+            to_archive["id"],
+        }
 
 
 class TestServiceParts:

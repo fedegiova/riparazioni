@@ -20,13 +20,16 @@ import DeleteIcon from '@mui/icons-material/Delete'
 import {
   WEEKDAYS,
   listSettings,
+  parseGasTypes,
   parseHolidays,
   parseOperators,
   parseWorkingHours,
   putSettings,
+  serializeGasTypes,
   serializeHolidays,
   serializeOperators,
   serializeWorkingHours,
+  type GasTypes,
   type HolidayRange,
   type Holidays,
   type Operators,
@@ -40,6 +43,8 @@ function SettingsPage() {
 
   const [operators, setOperators] = useState<Operators>([])
   const [newOperator, setNewOperator] = useState('')
+  const [gasTypes, setGasTypes] = useState<GasTypes>([])
+  const [newGasType, setNewGasType] = useState('')
   const [workingHours, setWorkingHours] = useState<WorkingHours>({})
   const [holidays, setHolidays] = useState<Holidays>({})
   const [currentYear] = useState(() => String(new Date().getFullYear()))
@@ -52,6 +57,7 @@ function SettingsPage() {
   useEffect(() => {
     if (!data) return
     setOperators(parseOperators(data.operators))
+    setGasTypes(parseGasTypes(data.gas_types))
     setWorkingHours(parseWorkingHours(data.working_hours))
     setHolidays(parseHolidays(data.holidays))
   }, [data])
@@ -73,6 +79,17 @@ function SettingsPage() {
 
   function removeOperator(index: number) {
     setOperators((current) => current.filter((_, i) => i !== index))
+  }
+
+  function addGasType() {
+    const name = newGasType.trim()
+    if (!name) return
+    setGasTypes((current) => [...current, name])
+    setNewGasType('')
+  }
+
+  function removeGasType(index: number) {
+    setGasTypes((current) => current.filter((_, i) => i !== index))
   }
 
   function updateInterval(day: Weekday, index: number, bound: 0 | 1, value: string) {
@@ -133,6 +150,7 @@ function SettingsPage() {
     try {
       await putSettings({
         operators: serializeOperators(operators),
+        gas_types: serializeGasTypes(gasTypes),
         working_hours: serializeWorkingHours(workingHours),
         holidays: serializeHolidays(holidays),
       })
@@ -196,6 +214,42 @@ function SettingsPage() {
             }}
           />
           <Button startIcon={<AddIcon />} onClick={addOperator}>
+            Add
+          </Button>
+        </Stack>
+      </Paper>
+
+      <Paper sx={{ p: 2, mb: 2 }}>
+        <Typography variant="h6" component="h2" sx={{ mb: 2 }}>
+          Gas types
+        </Typography>
+        <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap', mb: 2 }}>
+          {gasTypes.length === 0 ? (
+            <Typography color="text.secondary">No gas types.</Typography>
+          ) : (
+            gasTypes.map((name, index) => (
+              <Chip
+                key={`${name}-${index}`}
+                label={name}
+                onDelete={() => removeGasType(index)}
+              />
+            ))
+          )}
+        </Stack>
+        <Stack direction="row" spacing={1}>
+          <TextField
+            label="Add gas type"
+            size="small"
+            value={newGasType}
+            onChange={(event) => setNewGasType(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                addGasType()
+              }
+            }}
+          />
+          <Button startIcon={<AddIcon />} onClick={addGasType}>
             Add
           </Button>
         </Stack>

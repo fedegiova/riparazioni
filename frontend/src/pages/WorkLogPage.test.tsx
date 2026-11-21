@@ -1,19 +1,24 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import WorkLogPage from './WorkLogPage'
 
-const { getRepair, addWorkLog, updateWorkLog, listGasCylinders } = vi.hoisted(
-  () => ({
+const { getRepair, addWorkLog, updateWorkLog, listGasCylinders, getOperators } =
+  vi.hoisted(() => ({
     getRepair: vi.fn(),
     addWorkLog: vi.fn(),
     updateWorkLog: vi.fn(),
     listGasCylinders: vi.fn(),
-  }),
-)
+    getOperators: vi.fn(),
+  }))
 
 vi.mock('../api/repairs', () => ({ getRepair, addWorkLog, updateWorkLog }))
 vi.mock('../api/equipment', () => ({ listGasCylinders }))
+vi.mock('../api/settings', () => ({ getOperators }))
+
+beforeEach(() => {
+  getOperators.mockResolvedValue([])
+})
 
 afterEach(() => {
   cleanup()
@@ -74,6 +79,47 @@ describe('WorkLogPage', () => {
     await screen.findByText('New work log')
     const start = screen.getByLabelText('Start time') as HTMLInputElement
     expect(start.value).not.toBe('')
+  })
+
+  it('selects an operator from the configured list', async () => {
+    getRepair.mockResolvedValue(baseRepair)
+    getOperators.mockResolvedValue(['MARIO', 'LUIGI'])
+    updateWorkLog.mockResolvedValue({ id: 10 })
+    renderAt('/repairs/1/work-log/10')
+
+    const select = await screen.findByRole('combobox', { name: 'Operator' })
+    fireEvent.mouseDown(select)
+    fireEvent.click(await screen.findByRole('option', { name: 'MARIO' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(updateWorkLog).toHaveBeenCalled())
+    expect(updateWorkLog.mock.calls[0][2]).toMatchObject({ operator: 'MARIO' })
+  })
+
+  it('keeps the current operator when it is not in settings', async () => {
+    getRepair.mockResolvedValue(baseRepair)
+    getOperators.mockResolvedValue(['MARIO'])
+    renderAt('/repairs/1/work-log/10')
+
+    const select = await screen.findByRole('combobox', { name: 'Operator' })
+    expect(select.textContent).toContain('LORENZA')
+    fireEvent.mouseDown(select)
+    expect(await screen.findByRole('option', { name: 'LORENZA' })).toBeTruthy()
+  })
+
+  it('keeps the operator optional', async () => {
+    getRepair.mockResolvedValue(baseRepair)
+    getOperators.mockResolvedValue(['MARIO'])
+    updateWorkLog.mockResolvedValue({ id: 10 })
+    renderAt('/repairs/1/work-log/10')
+
+    const select = await screen.findByRole('combobox', { name: 'Operator' })
+    fireEvent.mouseDown(select)
+    fireEvent.click(await screen.findByRole('option', { name: 'None' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(updateWorkLog).toHaveBeenCalled())
+    expect(updateWorkLog.mock.calls[0][2].operator).toBeUndefined()
   })
 
   it('captures a gas recharge on a new entry', async () => {

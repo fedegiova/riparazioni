@@ -17,7 +17,7 @@ when a save is rejected.
 #### Scenario: Load current settings
 
 - **WHEN** a user opens the settings page
-- **THEN** the page shows the stored operators, working hours, and holidays
+- **THEN** the page shows the stored operators, working hours, holidays, and gas types
 
 #### Scenario: Save persists edits
 
@@ -78,3 +78,17 @@ remove named holiday ranges for the selected year.
 
 - **WHEN** the user removes a holiday range and saves
 - **THEN** the range is no longer stored for that year
+
+### Requirement: Edit the gas type list
+
+The settings page SHALL let the user add and remove gas types in a list editor.
+
+#### Scenario: Add a gas type
+
+- **WHEN** the user adds a gas type and saves
+- **THEN** the gas type appears in the list and is persisted
+
+#### Scenario: Remove a gas type
+
+- **WHEN** the user removes a gas type and saves
+- **THEN** the gas type no longer appears in the list and is removed from storage

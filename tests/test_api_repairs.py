@@ -154,6 +154,30 @@ class TestComputedFields:
         detail = client.get(f"/api/v1/repairs/{repair_id}").get_json()
         assert detail["total_hours"] == 0.0
 
+    def test_gas_used_sums_recharges(self, client, db):
+        cyl_id = _cylinder(db, remaining=20.0)
+        repair_id = _create_repair(client).get_json()["id"]
+        for weight in (2.5, 1.0):
+            client.post(
+                f"/api/v1/repairs/{repair_id}/work-log",
+                json={
+                    "gas_system_state": "VUOTO",
+                    "gas_recharge": cyl_id,
+                    "gas_recharge_weight": weight,
+                },
+            )
+        detail = client.get(f"/api/v1/repairs/{repair_id}").get_json()
+        assert detail["gas_used"] == 3.5
+
+        listing = client.get("/api/v1/repairs").get_json()
+        row = next(item for item in listing if item["id"] == repair_id)
+        assert row["gas_used"] == 3.5
+
+    def test_gas_used_zero_without_gas_records(self, client, db):
+        repair_id = _create_repair(client).get_json()["id"]
+        detail = client.get(f"/api/v1/repairs/{repair_id}").get_json()
+        assert detail["gas_used"] == 0
+
     def test_customer_name_resolved_from_reference_data(self, client, db):
         created = _create_repair(client, customer=1).get_json()
         # The seeded VICLIENTI shim row (id 1) is ACME SRL.
@@ -326,7 +350,7 @@ class TestGasRecharge:
         assert entry["gas_recharge"] is None
         assert entry["gas_recharge_weight"] is None
 
-    def test_recovered_weight_stored_balance_only_recharge(self, client, db):
+    def test_ricupero_ricarica_applies_net(self, client, db):
         cyl_id = _cylinder(db, remaining=10.0)
         repair_id = _create_repair(client).get_json()["id"]
         response = client.post(
@@ -340,7 +364,21 @@ class TestGasRecharge:
         )
         assert response.status_code == 201
         assert response.get_json()["gas_recovered_weight"] == 1.0
-        assert db.session.get(GasCylinder, cyl_id).remaining_weight == 7.5
+        assert db.session.get(GasCylinder, cyl_id).remaining_weight == 8.5
+
+    def test_recovery_increases_balance(self, client, db):
+        cyl_id = _cylinder(db, remaining=4.0)
+        repair_id = _create_repair(client).get_json()["id"]
+        response = client.post(
+            f"/api/v1/repairs/{repair_id}/work-log",
+            json={
+                "gas_system_state": "RECUPERO",
+                "gas_recharge": cyl_id,
+                "gas_recovered_weight": 1.0,
+            },
+        )
+        assert response.status_code == 201
+        assert db.session.get(GasCylinder, cyl_id).remaining_weight == 5.0
 
     def test_overdraw_rejected_balance_unchanged(self, client, db):
         cyl_id = _cylinder(db, remaining=10.0)
@@ -361,6 +399,77 @@ class TestGasRecharge:
             json={"gas_system_state": "VUOTO", "gas_recharge_weight": 1.0},
         )
         assert response.status_code == 400
+
+    def test_recovery_only_entry_accepted(self, client, db):
+        cyl_id = _cylinder(db, remaining=10.0)
+        repair_id = _create_repair(client).get_json()["id"]
+        response = client.post(
+            f"/api/v1/repairs/{repair_id}/work-log",
+            json={
+                "gas_system_state": "RECUPERO",
+                "gas_recharge": cyl_id,
+                "gas_recovered_weight": 1.0,
+            },
+        )
+        assert response.status_code == 201
+        payload = response.get_json()
+        assert payload["gas_recovered_weight"] == 1.0
+        assert payload["gas_recharge_weight"] is None
+
+    def test_recovery_with_recharge_weight_rejected(self, client, db):
+        cyl_id = _cylinder(db, remaining=10.0)
+        repair_id = _create_repair(client).get_json()["id"]
+        response = client.post(
+            f"/api/v1/repairs/{repair_id}/work-log",
+            json={
+                "gas_system_state": "RECUPERO",
+                "gas_recharge": cyl_id,
+                "gas_recharge_weight": 1.0,
+                "gas_recovered_weight": 1.0,
+            },
+        )
+        assert response.status_code == 400
+
+    def test_ricupero_ricarica_requires_recovered(self, client, db):
+        cyl_id = _cylinder(db, remaining=10.0)
+        repair_id = _create_repair(client).get_json()["id"]
+        response = client.post(
+            f"/api/v1/repairs/{repair_id}/work-log",
+            json={
+                "gas_system_state": "RICUPERO_RICARICA",
+                "gas_recharge": cyl_id,
+                "gas_recharge_weight": 1.0,
+            },
+        )
+        assert response.status_code == 400
+
+    def test_vuoto_with_recovered_rejected(self, client, db):
+        cyl_id = _cylinder(db, remaining=10.0)
+        repair_id = _create_repair(client).get_json()["id"]
+        response = client.post(
+            f"/api/v1/repairs/{repair_id}/work-log",
+            json={
+                "gas_system_state": "VUOTO",
+                "gas_recharge": cyl_id,
+                "gas_recharge_weight": 1.0,
+                "gas_recovered_weight": 1.0,
+            },
+        )
+        assert response.status_code == 400
+
+    def test_overfill_rejected_balance_unchanged(self, client, db):
+        cyl_id = _cylinder(db, remaining=19.0)
+        repair_id = _create_repair(client).get_json()["id"]
+        response = client.post(
+            f"/api/v1/repairs/{repair_id}/work-log",
+            json={
+                "gas_system_state": "RECUPERO",
+                "gas_recharge": cyl_id,
+                "gas_recovered_weight": 2.0,
+            },
+        )
+        assert response.status_code == 400
+        assert db.session.get(GasCylinder, cyl_id).remaining_weight == 19.0
 
     def test_gas_data_without_state_rejected(self, client, db):
         cyl_id = _cylinder(db, remaining=10.0)
@@ -383,6 +492,22 @@ class TestGasRecharge:
             json={"gas_system_state": "VUOTO", "gas_recharge": cyl_id, "gas_recharge_weight": 2.5},
         ).get_json()["id"]
         assert db.session.get(GasCylinder, cyl_id).remaining_weight == 7.5
+        client.delete(f"/api/v1/repairs/{repair_id}/work-log/{entry_id}")
+        assert db.session.get(GasCylinder, cyl_id).remaining_weight == 10.0
+
+    def test_delete_reverses_recovery_and_recharge(self, client, db):
+        cyl_id = _cylinder(db, remaining=10.0)
+        repair_id = _create_repair(client).get_json()["id"]
+        entry_id = client.post(
+            f"/api/v1/repairs/{repair_id}/work-log",
+            json={
+                "gas_system_state": "RICUPERO_RICARICA",
+                "gas_recharge": cyl_id,
+                "gas_recharge_weight": 2.5,
+                "gas_recovered_weight": 1.0,
+            },
+        ).get_json()["id"]
+        assert db.session.get(GasCylinder, cyl_id).remaining_weight == 8.5
         client.delete(f"/api/v1/repairs/{repair_id}/work-log/{entry_id}")
         assert db.session.get(GasCylinder, cyl_id).remaining_weight == 10.0
 
@@ -415,6 +540,24 @@ class TestExport:
         sheet = load_workbook(BytesIO(response.data)).active
         assert sheet.max_row == 3  # header + two repairs
         assert sheet.cell(row=1, column=1).value == "id"
+
+    def test_export_includes_gas_used_column(self, client, db):
+        cyl_id = _cylinder(db, remaining=20.0)
+        repair_id = _create_repair(client).get_json()["id"]
+        client.post(
+            f"/api/v1/repairs/{repair_id}/work-log",
+            json={
+                "gas_system_state": "VUOTO",
+                "gas_recharge": cyl_id,
+                "gas_recharge_weight": 2.5,
+            },
+        )
+        response = client.get("/api/v1/repairs/export")
+        sheet = load_workbook(BytesIO(response.data)).active
+        headers = [cell.value for cell in sheet[1]]
+        assert "gas_used" in headers
+        column = headers.index("gas_used") + 1
+        assert sheet.cell(row=2, column=column).value == 2.5
 
     def test_export_honors_filters(self, client, db):
         db.session.add(

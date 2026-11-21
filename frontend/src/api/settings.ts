@@ -18,10 +18,17 @@ export type HolidayRange = { from: string; to: string; name: string }
 export type Holidays = Record<string, HolidayRange[]>
 
 export type Operators = string[]
+export type GasTypes = string[]
 
 // --- parse (API -> typed state) ---------------------------------------------
 
 export function parseOperators(value: unknown): Operators {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : []
+}
+
+export function parseGasTypes(value: unknown): GasTypes {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === 'string')
     : []
@@ -80,6 +87,11 @@ export function serializeOperators(operators: Operators): Operators {
   return operators.map((name) => name.trim()).filter((name) => name !== '')
 }
 
+/** Trim names and drop blanks. */
+export function serializeGasTypes(gasTypes: GasTypes): GasTypes {
+  return gasTypes.map((name) => name.trim()).filter((name) => name !== '')
+}
+
 /** Always emit every weekday (an empty list means closed). */
 export function serializeWorkingHours(
   hours: WorkingHours,
@@ -116,6 +128,16 @@ export async function getSetting(name: string): Promise<unknown> {
     params: { path: { name } },
   })
   return data
+}
+
+/** The gas types configured in settings, used to populate the cylinder picker. */
+export async function getGasTypes(): Promise<GasTypes> {
+  return parseGasTypes(await getSetting('gas_types'))
+}
+
+/** The operators configured in settings, used by the work-log operator picker. */
+export async function getOperators(): Promise<Operators> {
+  return parseOperators(await getSetting('operators'))
 }
 
 export async function putSetting(name: string, value: unknown): Promise<unknown> {

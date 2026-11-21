@@ -198,7 +198,15 @@ paths:
   /api/v1/gas-cylinders:
     get:
       summary: List gas cylinders
+      description: Archived cylinders are hidden unless `?archived=true`.
       tags: [equipment]
+      parameters:
+        - name: archived
+          in: query
+          required: false
+          description: Include archived cylinders when true
+          schema:
+            type: boolean
       responses:
         "200":
           description: List of gas cylinders
@@ -217,7 +225,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/GasCylinderInput"
+              $ref: "#/components/schemas/GasCylinderCreate"
       responses:
         "201":
           description: Created gas cylinder
@@ -273,6 +281,83 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/gas-cylinders/{cylinder_id}/archive:
+    parameters:
+      - $ref: "#/components/parameters/CylinderIdParam"
+    post:
+      summary: Archive a gas cylinder
+      description: |
+        Allowed only when `remaining_weight` is below a quarter of
+        `full_weight` (400 otherwise). Archived cylinders are hidden from the
+        default list and cannot be recharged until refilled.
+      tags: [equipment]
+      responses:
+        "200":
+          description: Archived gas cylinder
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GasCylinder"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/gas-cylinders/{cylinder_id}/restore:
+    parameters:
+      - $ref: "#/components/parameters/CylinderIdParam"
+    post:
+      summary: Restore an archived gas cylinder
+      description: Clears the archived flag; the remaining weight is unchanged.
+      tags: [equipment]
+      responses:
+        "200":
+          description: Restored gas cylinder
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GasCylinder"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/gas-cylinders/{cylinder_id}/refills:
+    parameters:
+      - $ref: "#/components/parameters/CylinderIdParam"
+    get:
+      summary: List refills for a gas cylinder
+      tags: [equipment]
+      responses:
+        "200":
+          description: List of refills
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Refill"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      summary: Record a gas cylinder refill
+      description: |
+        Restores the cylinder to its full weight and clears the archived flag in
+        one transaction. A refill is allowed on any cylinder.
+      tags: [equipment]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefillInput"
+      responses:
+        "201":
+          description: Created refill
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Refill"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/service-parts:
     get:
       summary: List service parts
@@ -1025,7 +1110,7 @@ components:
           type: string
     GasCylinder:
       type: object
-      required: [id]
+      required: [id, full_weight]
       properties:
         id:
           type: integer
@@ -1050,6 +1135,9 @@ components:
         notes:
           type: string
           maxLength: 4000
+        archived:
+          type: boolean
+          description: Retired cylinder; hidden from the default list
     GasCylinderInput:
       type: object
       properties:
@@ -1069,6 +1157,35 @@ components:
           nullable: true
         notes:
           type: string
+    GasCylinderCreate:
+      allOf:
+        - $ref: "#/components/schemas/GasCylinderInput"
+        - type: object
+          required: [full_weight]
+    Refill:
+      type: object
+      required: [id, gas_cylinder_id, date]
+      properties:
+        id:
+          type: integer
+        gas_cylinder_id:
+          type: integer
+        date:
+          type: string
+          format: date
+        reference:
+          type: string
+          nullable: true
+    RefillInput:
+      type: object
+      properties:
+        date:
+          type: string
+          format: date
+          description: Defaults to today when omitted
+        reference:
+          type: string
+          nullable: true
     ServicePart:
       type: object
       required: [id]
@@ -1200,6 +1317,9 @@ components:
         total_hours:
           type: number
           description: Sum of the repair's work-log durations, in hours
+        gas_used:
+          type: number
+          description: Sum of the recharged weights recorded on the repair's work-log entries, in kg
         notes:
           type: string
           maxLength: 4000
@@ -1296,7 +1416,7 @@ components:
           nullable: true
         gas_system_state:
           type: string
-          enum: [VUOTO, PIENO, RICUPERO_RICARICA]
+          enum: [VUOTO, PIENO, RECUPERO, RICUPERO_RICARICA]
           nullable: true
           description: Gas system state of the operation
         gas_recharge:
@@ -1310,7 +1430,7 @@ components:
         gas_recovered_weight:
           type: number
           nullable: true
-          description: Kg of gas recovered (recorded only, does not move any balance)
+          description: Kg of gas recovered; adds to the cylinder balance
     WorkLogInput:
       type: object
       description: |
@@ -1328,7 +1448,7 @@ components:
           maxLength: 32
         gas_system_state:
           type: string
-          enum: [VUOTO, PIENO, RICUPERO_RICARICA]
+          enum: [VUOTO, PIENO, RECUPERO, RICUPERO_RICARICA]
           nullable: true
         gas_recharge:
           type: integer
@@ -1349,9 +1469,9 @@ components:
       description: |
         A setting value as a JSON document. The known settings are `operators`
         (array of strings), `working_hours` (weekday name to a list of
-        `[HH:MM, HH:MM]` intervals, an empty list meaning closed), and `holidays`
+        `[HH:MM, HH:MM]` intervals, an empty list meaning closed), `holidays`
         (four-digit year to a list of `{from, to, name}` date ranges within that
-        year).
+        year), and `gas_types` (array of gas type names).
 
 tags:
   - name: reference-data

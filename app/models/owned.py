@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 
 from app.extensions import db
 
-GAS_SYSTEM_STATES = ("VUOTO", "PIENO", "RICUPERO_RICARICA")
+GAS_SYSTEM_STATES = ("VUOTO", "PIENO", "RECUPERO", "RICUPERO_RICARICA")
 
 
 def _now() -> datetime:
@@ -63,15 +63,24 @@ class GasCylinder(db.Model):
     gas_kind = db.Column(db.String(32))
     serial_nr = db.Column(db.String(32))
     model = db.Column(db.String(32))
-    full_weight = db.Column(db.Float)
+    # Required: the archive threshold and every balance computation depend on it.
+    full_weight = db.Column(db.Float, nullable=False)
     remaining_weight = db.Column(db.Float)
     picture_ref = db.Column(db.Integer, db.ForeignKey("PICTURES.id"))
     notes = db.Column(db.String(4000))
+    # Reversible retire flag; an archived cylinder is hidden from the default
+    # list and cannot be offered for recharge/recovery until refilled.
+    archived = db.Column(db.Boolean, nullable=False, default=False, server_default=db.text("0"))
 
     # passive_deletes: a cylinder in use by a work-log entry must not be
     # deletable — the DB foreign key rejects it (HTTP 409).
     work_log_entries = db.relationship(
         "RepairWorkLog", back_populates="cylinder", passive_deletes=True
+    )
+    # Refills are owned by the cylinder: deleting an unreferenced cylinder
+    # removes its refill history with it.
+    refills = db.relationship(
+        "Refill", back_populates="cylinder", cascade="all, delete-orphan"
     )
 
     def to_dict(self) -> dict:
@@ -84,6 +93,34 @@ class GasCylinder(db.Model):
             "remaining_weight": self.remaining_weight,
             "picture_ref": self.picture_ref,
             "notes": self.notes,
+            "archived": self.archived,
+        }
+
+
+class Refill(db.Model):
+    """A record that a cylinder was sent out and returned full.
+
+    The amount added is implicit (``full_weight - remaining_weight`` at the
+    time of the refill), so only the date and an optional reference are stored.
+    """
+
+    __tablename__ = "REFILLS"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    gas_cylinder_id = db.Column(
+        db.Integer, db.ForeignKey("GAS_CYLINDERS.id"), nullable=False
+    )
+    date = db.Column(db.Date, nullable=False)
+    reference = db.Column(db.String(255))
+
+    cylinder = db.relationship("GasCylinder", back_populates="refills")
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "gas_cylinder_id": self.gas_cylinder_id,
+            "date": self.date.isoformat() if self.date else None,
+            "reference": self.reference,
         }
 
 
@@ -170,6 +207,7 @@ class Repairs(db.Model):
     # Computed on read and attached by the service layer (never stored).
     customer_name = None
     total_hours = 0.0
+    gas_used = 0.0
 
     refrigerator_rel = db.relationship("Refrigerator", back_populates="repairs")
     work_log = db.relationship(
@@ -196,6 +234,7 @@ class Repairs(db.Model):
             if self.delivery_date
             else None,
             "total_hours": self.total_hours,
+            "gas_used": self.gas_used,
             "notes": self.notes,
         }
         if include_details:
