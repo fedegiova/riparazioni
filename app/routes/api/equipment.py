@@ -6,6 +6,7 @@ API IntegrityError handler renders it as a conflict (same behavior on
 SQLite tests and on MSSQL in production).
 """
 
+from datetime import UTC, datetime
 from datetime import date as date_cls
 
 from flask import jsonify, request
@@ -86,7 +87,6 @@ CYLINDER_FIELDS = (
     "model",
     "full_weight",
     "remaining_weight",
-    "picture_ref",
     "notes",
 )
 
@@ -183,7 +183,7 @@ def restore_gas_cylinder(item_id):
 
 def _parse_refill_date(value):
     if value is None:
-        return date_cls.today()
+        return datetime.now(UTC).date()
     if not isinstance(value, str):
         raise BadRequest("date must be an ISO 8601 date")
     try:
@@ -227,7 +227,6 @@ PART_FIELDS = (
     "kind",
     "price",
     "is_refrigerator_part",
-    "picture_ref",
     "notes",
 )
 

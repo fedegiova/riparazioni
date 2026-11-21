@@ -12,6 +12,8 @@ const {
   listCustomers,
   listVehicles,
   listServiceParts,
+  uploadPicture,
+  deletePicture,
 } = vi.hoisted(() => ({
   getRepair: vi.fn(),
   createRepair: vi.fn(),
@@ -21,6 +23,8 @@ const {
   listCustomers: vi.fn(),
   listVehicles: vi.fn(),
   listServiceParts: vi.fn(),
+  uploadPicture: vi.fn(),
+  deletePicture: vi.fn(),
 }))
 
 vi.mock('../api/repairs', () => ({
@@ -32,6 +36,11 @@ vi.mock('../api/repairs', () => ({
 }))
 vi.mock('../api/reference', () => ({ listCustomers, listVehicles }))
 vi.mock('../api/equipment', () => ({ listServiceParts }))
+vi.mock('../api/pictures', () => ({
+  uploadPicture,
+  deletePicture,
+  pictureFileUrl: (id: number) => `/api/v1/pictures/${id}/file`,
+}))
 
 afterEach(() => {
   cleanup()
@@ -216,6 +225,63 @@ describe('RepairPage', () => {
 
     const start = (await screen.findByLabelText('Start date')) as HTMLInputElement
     expect(start.value).not.toBe('')
+  })
+
+  it('uploads a picture taken from the repair page without a filename prompt', async () => {
+    getRepair.mockResolvedValue(baseRepair)
+    uploadPicture.mockResolvedValue({
+      id: 5,
+      path: 'repair/2026-11-21-0001.jpg',
+      owner_type: 'repair',
+      owner_id: 1,
+    })
+    renderAt('/repairs/1')
+
+    await screen.findByText('LORENZA')
+    const input = screen.getByTestId('picture-input') as HTMLInputElement
+    expect(input.getAttribute('accept')).toBe('image/*')
+    expect(input.getAttribute('capture')).toBe('environment')
+
+    const file = new File(['bytes'], 'shot.jpg', { type: 'image/jpeg' })
+    fireEvent.change(input, { target: { files: [file] } })
+
+    await waitFor(() => expect(uploadPicture).toHaveBeenCalledWith(file, 'repair', 1))
+    expect(await screen.findByAltText('Picture 5')).toBeTruthy()
+  })
+
+  it('shows the repair pictures as thumbnails', async () => {
+    getRepair.mockResolvedValue({
+      ...baseRepair,
+      pictures: [
+        {
+          id: 5,
+          path: 'repair/2026-11-21-0001.jpg',
+          owner_type: 'repair',
+          owner_id: 1,
+        },
+      ],
+    })
+    renderAt('/repairs/1')
+
+    const image = (await screen.findByAltText('Picture 5')) as HTMLImageElement
+    expect(image.getAttribute('src')).toBe('/api/v1/pictures/5/file')
+  })
+
+  it('deletes a picture from the repair page', async () => {
+    getRepair.mockResolvedValue({
+      ...baseRepair,
+      pictures: [
+        { id: 5, path: 'repair/x.jpg', owner_type: 'repair', owner_id: 1 },
+      ],
+    })
+    deletePicture.mockResolvedValue(undefined)
+    renderAt('/repairs/1')
+
+    await screen.findByAltText('Picture 5')
+    fireEvent.click(screen.getByRole('button', { name: 'Delete picture 5' }))
+
+    await waitFor(() => expect(deletePicture).toHaveBeenCalledWith(5))
+    await waitFor(() => expect(screen.queryByAltText('Picture 5')).toBeNull())
   })
 
   it('stops a work-log entry by setting its end time', async () => {

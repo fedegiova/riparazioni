@@ -89,13 +89,21 @@ describe('api client (generated from docs/openapi.yaml)', () => {
 
     const form = new FormData()
     form.append('file', new Blob(['image-bytes']), 'image.jpg')
+    form.append('owner_type', 'repair')
+    form.append('owner_id', '12')
     form.append('uploaded_by', 'fede')
 
     const { data } = await api.POST('/api/v1/pictures', {
       // openapi-typescript models the multipart body as the document's
-      // { file, uploaded_by } object; the runtime body is a real FormData,
-      // which openapi-fetch passes through to fetch unserialized.
-      body: form as unknown as { file: string; uploaded_by?: string },
+      // { file, owner_type, owner_id, uploaded_by } object; the runtime body
+      // is a real FormData, which openapi-fetch passes through to fetch
+      // unserialized.
+      body: form as unknown as {
+        file: string
+        owner_type: 'repair' | 'spare' | 'cylinder'
+        owner_id: number
+        uploaded_by?: string
+      },
       fetch: fetchMock as unknown as typeof fetch,
     })
 

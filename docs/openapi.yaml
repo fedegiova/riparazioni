@@ -451,7 +451,20 @@ paths:
   /api/v1/pictures:
     get:
       summary: List pictures
+      description: Optionally filtered by owner; the two owner parameters must be given together.
       tags: [pictures]
+      parameters:
+        - name: owner_type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [repair, spare, cylinder]
+        - name: owner_id
+          in: query
+          required: false
+          schema:
+            type: integer
       responses:
         "200":
           description: List of picture metadata
@@ -464,8 +477,9 @@ paths:
     post:
       summary: Upload a picture
       description: |
-        Multipart upload. The file is stored under `UPLOAD_DIR/pictures/<uuid-hex><ext>`
-        and the `path` field records the location relative to `UPLOAD_DIR`.
+        Multipart upload, attached to exactly one owner. The file is stored as
+        `UPLOAD_DIR/<owner_type>/YYYY-MM-DD-SEQ.<ext>` and the `path` field
+        records the location relative to `UPLOAD_DIR`.
       tags: [pictures]
       requestBody:
         required: true
@@ -473,12 +487,17 @@ paths:
           multipart/form-data:
             schema:
               type: object
-              required: [file]
+              required: [file, owner_type, owner_id]
               properties:
                 file:
                   type: string
                   format: binary
                   description: The image file (extension is preserved)
+                owner_type:
+                  type: string
+                  enum: [repair, spare, cylinder]
+                owner_id:
+                  type: integer
                 uploaded_by:
                   type: string
                   description: Optional author name stored in the metadata
@@ -491,6 +510,8 @@ paths:
                 $ref: "#/components/schemas/Picture"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/pictures/{picture_id}:
     parameters:
       - $ref: "#/components/parameters/PictureIdParam"
@@ -515,8 +536,6 @@ paths:
           description: Deleted
         "404":
           $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
   /api/v1/pictures/{picture_id}/file:
     get:
       summary: Download the stored file
@@ -1128,10 +1147,6 @@ components:
           type: number
         remaining_weight:
           type: number
-        picture_ref:
-          type: integer
-          nullable: true
-          description: Reference to a picture id
         notes:
           type: string
           maxLength: 4000
@@ -1152,9 +1167,6 @@ components:
         remaining_weight:
           type: number
           description: Defaults to full_weight on create when omitted
-        picture_ref:
-          type: integer
-          nullable: true
         notes:
           type: string
     GasCylinderCreate:
@@ -1205,10 +1217,6 @@ components:
           type: integer
         is_refrigerator_part:
           type: boolean
-        picture_ref:
-          type: integer
-          nullable: true
-          description: Reference to a picture id
         notes:
           type: string
           maxLength: 4000
@@ -1225,22 +1233,26 @@ components:
           type: integer
         is_refrigerator_part:
           type: boolean
-        picture_ref:
-          type: integer
-          nullable: true
         notes:
           type: string
 
     # --- pictures ------------------------------------------------------------
     Picture:
       type: object
-      required: [id, path]
+      required: [id, path, owner_type, owner_id]
       properties:
         id:
           type: integer
         path:
           type: string
-          description: File location relative to UPLOAD_DIR (e.g. pictures/ab12cd.jpg)
+          description: File location relative to UPLOAD_DIR (e.g. repair/2026-11-21-0007.jpg)
+        owner_type:
+          type: string
+          enum: [repair, spare, cylinder]
+          description: The kind of record the picture belongs to
+        owner_id:
+          type: integer
+          description: Id of the owning repair, spare, or gas cylinder
         uploaded_by:
           type: string
           nullable: true
@@ -1336,6 +1348,10 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/RepairPart"
+            pictures:
+              type: array
+              items:
+                $ref: "#/components/schemas/Picture"
     RepairCreate:
       type: object
       properties:

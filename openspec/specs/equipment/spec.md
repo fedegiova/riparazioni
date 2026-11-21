@@ -34,7 +34,7 @@ deleting refrigerators (serial number, model, brand, gas weight, notes).
 ### Requirement: Manage gas cylinders
 The system SHALL allow creating, listing, retrieving, updating, and deleting
 gas cylinders (gas kind, serial number, model, full weight, remaining weight,
-picture reference, notes, archived flag). Full weight SHALL be required at
+notes, archived flag). Full weight SHALL be required at
 creation; a request without it SHALL be rejected. Remaining weight SHALL
 default to the full weight when omitted at creation. Deleting a cylinder that
 a work-log entry references SHALL be rejected.
@@ -103,7 +103,7 @@ SHALL be allowed on any cylinder.
 ### Requirement: Manage service parts
 The system SHALL allow creating, listing, retrieving, updating, and
 deleting service parts (name, supplier, kind, price,
-is-refrigerator-part flag, picture reference, notes). The list SHALL be
+is-refrigerator-part flag, notes). The list SHALL be
 filterable by the is-refrigerator-part flag.
 
 #### Scenario: Create a part

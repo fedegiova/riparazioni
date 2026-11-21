@@ -25,6 +25,7 @@ from app.models import (
     GAS_SYSTEM_STATES,
     Customer,
     GasCylinder,
+    Picture,
     RepairPart,
     Repairs,
     RepairWorkLog,
@@ -271,6 +272,7 @@ def _decorate_repairs(repairs: list[Repairs]) -> None:
     ids = [repair.id for repair in repairs]
     hours: dict[int, float] = {}
     gas: dict[int, float] = {}
+    pictures: dict[int, list] = {}
     if ids:
         entries = db.session.execute(
             db.select(RepairWorkLog).where(RepairWorkLog.id_repairs.in_(ids))
@@ -280,11 +282,19 @@ def _decorate_repairs(repairs: list[Repairs]) -> None:
             gas[entry.id_repairs] = gas.get(entry.id_repairs, 0.0) + (
                 entry.gas_recharge_weight or 0.0
             )
+        owned = db.session.execute(
+            db.select(Picture)
+            .where(Picture.owner_type == "repair", Picture.owner_id.in_(ids))
+            .order_by(Picture.id)
+        ).scalars()
+        for picture in owned:
+            pictures.setdefault(picture.owner_id, []).append(picture)
     names = _resolve_customer_names({repair.customer for repair in repairs})
     for repair in repairs:
         repair.total_hours = hours.get(repair.id, 0.0)
         repair.gas_used = gas.get(repair.id, 0.0)
         repair.customer_name = names.get(repair.customer)
+        repair.pictures = pictures.get(repair.id, [])
 
 
 # --- repair CRUD ------------------------------------------------------------------

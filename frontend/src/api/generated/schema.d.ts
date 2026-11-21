@@ -893,10 +893,16 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List pictures */
+        /**
+         * List pictures
+         * @description Optionally filtered by owner; the two owner parameters must be given together.
+         */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    owner_type?: "repair" | "spare" | "cylinder";
+                    owner_id?: number;
+                };
                 header?: never;
                 path?: never;
                 cookie?: never;
@@ -917,8 +923,9 @@ export interface paths {
         put?: never;
         /**
          * Upload a picture
-         * @description Multipart upload. The file is stored under `UPLOAD_DIR/pictures/<uuid-hex><ext>`
-         *     and the `path` field records the location relative to `UPLOAD_DIR`.
+         * @description Multipart upload, attached to exactly one owner. The file is stored as
+         *     `UPLOAD_DIR/<owner_type>/YYYY-MM-DD-SEQ.<ext>` and the `path` field
+         *     records the location relative to `UPLOAD_DIR`.
          */
         post: {
             parameters: {
@@ -935,6 +942,9 @@ export interface paths {
                          * @description The image file (extension is preserved)
                          */
                         file: string;
+                        /** @enum {string} */
+                        owner_type: "repair" | "spare" | "cylinder";
+                        owner_id: number;
                         /** @description Optional author name stored in the metadata */
                         uploaded_by?: string;
                     };
@@ -951,6 +961,7 @@ export interface paths {
                     };
                 };
                 400: components["responses"]["BadRequest"];
+                409: components["responses"]["Conflict"];
             };
         };
         delete?: never;
@@ -1017,7 +1028,6 @@ export interface paths {
                     content?: never;
                 };
                 404: components["responses"]["NotFound"];
-                409: components["responses"]["Conflict"];
             };
         };
         options?: never;
@@ -1701,8 +1711,6 @@ export interface components {
             model?: string;
             full_weight: number;
             remaining_weight?: number;
-            /** @description Reference to a picture id */
-            picture_ref?: number | null;
             notes?: string;
             /** @description Retired cylinder; hidden from the default list */
             archived?: boolean;
@@ -1714,7 +1722,6 @@ export interface components {
             full_weight?: number;
             /** @description Defaults to full_weight on create when omitted */
             remaining_weight?: number;
-            picture_ref?: number | null;
             notes?: string;
         };
         GasCylinderCreate: components["schemas"]["GasCylinderInput"] & Record<string, never>;
@@ -1740,8 +1747,6 @@ export interface components {
             kind?: string;
             price?: number;
             is_refrigerator_part?: boolean;
-            /** @description Reference to a picture id */
-            picture_ref?: number | null;
             notes?: string;
         };
         ServicePartInput: {
@@ -1750,13 +1755,19 @@ export interface components {
             kind?: string;
             price?: number;
             is_refrigerator_part?: boolean;
-            picture_ref?: number | null;
             notes?: string;
         };
         Picture: {
             id: number;
-            /** @description File location relative to UPLOAD_DIR (e.g. pictures/ab12cd.jpg) */
+            /** @description File location relative to UPLOAD_DIR (e.g. repair/2026-11-21-0007.jpg) */
             path: string;
+            /**
+             * @description The kind of record the picture belongs to
+             * @enum {string}
+             */
+            owner_type: "repair" | "spare" | "cylinder";
+            /** @description Id of the owning repair, spare, or gas cylinder */
+            owner_id: number;
             uploaded_by?: string | null;
             /** Format: date-time */
             uploaded_date?: string;
@@ -1806,6 +1817,7 @@ export interface components {
         RepairDetail: components["schemas"]["Repair"] & {
             work_log?: components["schemas"]["WorkLogEntry"][];
             parts?: components["schemas"]["RepairPart"][];
+            pictures?: components["schemas"]["Picture"][];
         };
         RepairCreate: {
             /** @description Must exist in the customers reference data (409 otherwise) */

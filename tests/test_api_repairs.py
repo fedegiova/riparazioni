@@ -117,6 +117,27 @@ class TestRetrieve:
         assert len(detail["parts"]) == 1
         assert detail["parts"][0]["quantity"] == 2
 
+    def test_detail_includes_pictures_and_list_omits_them(self, client, db):
+        repair = _create_repair(client).get_json()
+        upload = client.post(
+            "/api/v1/pictures",
+            data={
+                "file": (BytesIO(b"\xff\xd8\xff"), "p.jpg"),
+                "owner_type": "repair",
+                "owner_id": str(repair["id"]),
+            },
+            content_type="multipart/form-data",
+        )
+        assert upload.status_code == 201
+
+        detail = client.get(f"/api/v1/repairs/{repair['id']}").get_json()
+        assert [item["id"] for item in detail["pictures"]] == [
+            upload.get_json()["id"]
+        ]
+
+        listing = client.get("/api/v1/repairs").get_json()
+        assert "pictures" not in listing[0]
+
     def test_unknown_repair_404(self, client, db):
         assert client.get("/api/v1/repairs/99999").status_code == 404
 

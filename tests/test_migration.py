@@ -72,6 +72,19 @@ def test_migration_upgrade_and_downgrade(tmp_path):
         assert cylinder_columns["archived"]["nullable"] is False
         assert cylinder_columns["full_weight"]["nullable"] is False
 
+        # Schema delta: PICTURES carries an owner pair; the single picture_ref
+        # link is gone from the owned tables.
+        picture_columns = {
+            column["name"]: column
+            for column in inspector.get_columns("PICTURES")
+        }
+        assert {"owner_type", "owner_id"} <= set(picture_columns), picture_columns
+        assert picture_columns["owner_type"]["nullable"] is False
+        assert picture_columns["owner_id"]["nullable"] is False
+        for table in ("GAS_CYLINDERS", "SERVICE_PARTS"):
+            columns = {c["name"] for c in inspector.get_columns(table)}
+            assert "picture_ref" not in columns, (table, columns)
+
         # Rolling back one revision restores the pre-change shape.
         command.downgrade(cfg, "051870300b7a")
         inspector = sa.inspect(db.engine)

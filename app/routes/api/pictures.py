@@ -1,8 +1,8 @@
-"""Pictures: upload, list, detail, download, delete (task group 4).
+"""Pictures: upload, list, detail, download, delete.
 
-Delete-while-referenced returns 409: gas cylinders and service parts hold a
-``picture_ref`` foreign key, and the Picture model uses passive_deletes so
-the constraint is what rejects the delete.
+A picture belongs to exactly one owner (``owner_type``/``owner_id``), set at
+upload time. There is no separate reference to protect, so deleting a picture
+is never a conflict.
 """
 
 from flask import jsonify, request, send_file
@@ -11,7 +11,7 @@ from app.extensions import db
 from app.models import Picture
 from app.routes.api import bp
 from app.services import pictures as pictures_service
-from app.services.errors import NotFound
+from app.services.errors import BadRequest, NotFound
 
 
 def _get_or_404(item_id: int) -> Picture:
@@ -21,23 +21,40 @@ def _get_or_404(item_id: int) -> Picture:
     return picture
 
 
+def _owner_filter():
+    """The optional owner filter, or ``(None, None)`` when absent (400 if half)."""
+    owner_type = request.args.get("owner_type")
+    owner_id = request.args.get("owner_id")
+    if (owner_type is None) != (owner_id is None):
+        raise BadRequest("owner_type and owner_id must be provided together")
+    if owner_type is None:
+        return None, None
+    try:
+        return owner_type, int(owner_id)
+    except (TypeError, ValueError):
+        raise BadRequest("owner_id must be an integer") from None
+
+
 @bp.get("/pictures")
 def list_pictures():
-    items = (
-        db.session.execute(db.select(Picture).order_by(Picture.id)).scalars().all()
-    )
+    query = db.select(Picture).order_by(Picture.id)
+    owner_type, owner_id = _owner_filter()
+    if owner_type is not None:
+        query = query.where(
+            Picture.owner_type == owner_type, Picture.owner_id == owner_id
+        )
+    items = db.session.execute(query).scalars().all()
     return jsonify([item.to_dict() for item in items])
 
 
 @bp.post("/pictures")
 def upload_picture():
-    file_storage = request.files.get("file")
-    if file_storage is None or not file_storage.filename:
-        from app.services.errors import BadRequest
-
-        raise BadRequest("a file field is required")
-    uploaded_by = request.form.get("uploaded_by")
-    picture = pictures_service.store_upload(file_storage, uploaded_by)
+    picture = pictures_service.store_upload(
+        request.files.get("file"),
+        request.form.get("owner_type"),
+        request.form.get("owner_id"),
+        request.form.get("uploaded_by"),
+    )
     db.session.commit()
     return jsonify(picture.to_dict()), 201
 
@@ -58,6 +75,6 @@ def download_picture(item_id):
 def delete_picture(item_id):
     picture = _get_or_404(item_id)
     db.session.delete(picture)
-    db.session.commit()  # 409 (still referenced) is raised here, file untouched
+    db.session.commit()
     pictures_service.remove_file(picture)
     return "", 204

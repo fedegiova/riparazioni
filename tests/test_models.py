@@ -55,6 +55,17 @@ def test_refill_columns(app):
     assert fks and fks[0].column.table.name == "GAS_CYLINDERS"
 
 
+def test_picture_owner_columns(app):
+    """Pictures carry an owner pair and no legacy picture_ref (task 1.1)."""
+    columns = {c.name: c for c in Picture.__table__.columns}
+    assert {"owner_type", "owner_id"} <= set(columns)
+    assert columns["owner_type"].nullable is False
+    assert columns["owner_id"].nullable is False
+    assert columns["path"].unique is True
+    assert "picture_ref" not in {c.name for c in GasCylinder.__table__.columns}
+    assert "picture_ref" not in {c.name for c in ServicePart.__table__.columns}
+
+
 def test_external_models_map_legacy_tables(app):
     """External models map DATIDBSTORICO tables with the documented columns (task 1.2)."""
     vehicle_cols = {c.name for c in Vehicle.__table__.columns}

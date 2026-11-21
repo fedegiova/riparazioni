@@ -24,7 +24,7 @@ The system SHALL allow creating a repair with customer, vehicle, optional refrig
 - **THEN** the system responds with HTTP 409 and no repair is created
 
 ### Requirement: Retrieve repairs
-The system SHALL return a list of repairs, filterable by customer, vehicle, refrigerator, and a start-date range, and a single repair by ID. Each repair SHALL report the customer's resolved name and its total worked hours, computed as the sum of its work-log entry durations. The single-repair response SHALL additionally include its work-log entries and associated parts.
+The system SHALL return a list of repairs, filterable by customer, vehicle, refrigerator, and a start-date range, and a single repair by ID. Each repair SHALL report the customer's resolved name and its total worked hours, computed as the sum of its work-log entry durations. The single-repair response SHALL additionally include its work-log entries, associated parts, and pictures.
 
 #### Scenario: List all repairs
 - **WHEN** a client GETs /api/v1/repairs
@@ -45,6 +45,10 @@ The system SHALL return a list of repairs, filterable by customer, vehicle, refr
 #### Scenario: Unknown repair
 - **WHEN** a client GETs /api/v1/repairs/<id> with a non-existent ID
 - **THEN** the system responds with HTTP 404
+
+#### Scenario: Repair detail includes pictures
+- **WHEN** a client GETs /api/v1/repairs/<id> for a repair that has pictures
+- **THEN** the response includes the repair with its pictures
 
 ### Requirement: Update a repair
 The system SHALL allow updating a repair's customer, vehicle, refrigerator, notes, delivery date, and end datetime. Setting the end datetime marks the repair completed; clearing it reopens the repair.

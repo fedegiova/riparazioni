@@ -126,21 +126,25 @@ file), `405` (writes to read-only resources), `409` (referential conflict).
 - `GET/POST /api/v1/service-parts`, `GET/PUT/DELETE /api/v1/service-parts/<id>`
   — list filter: `?is_refrigerator_part=true|false`
 
-Deleting a record still referenced by a repair, work-log entry or picture
-reference returns `409`.
+Deleting a record still referenced by a repair or work-log entry returns `409`.
 
 ### Pictures
 
+A picture is attached to exactly one owner at upload: a `repair`, a `spare`
+(service part), or a `cylinder`.
+
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/v1/pictures` | multipart upload (`file` field, optional `uploaded_by`) |
-| GET | `/api/v1/pictures` | List pictures |
+| POST | `/api/v1/pictures` | multipart upload (`file`, `owner_type`, `owner_id`, optional `uploaded_by`) |
+| GET | `/api/v1/pictures` | List pictures; filter with `?owner_type=&owner_id=` |
 | GET | `/api/v1/pictures/<id>` | Picture metadata |
 | GET | `/api/v1/pictures/<id>/file` | Download the stored file |
-| DELETE | `/api/v1/pictures/<id>` | Delete record + file (409 while referenced) |
+| DELETE | `/api/v1/pictures/<id>` | Delete record + file |
 
-Files are stored as `UPLOAD_DIR/pictures/<uuid-hex><ext>`; `PICTURES.path`
-keeps the relative path.
+An unknown owner type or a missing owner id is a `400`; an owner id that does
+not exist is a `409`. Files are stored as
+`UPLOAD_DIR/<owner_type>/YYYY-MM-DD-SEQ.<ext>`, where `SEQ` is a per-type,
+per-day sequence; `PICTURES.path` keeps the relative path.
 
 ### Repairs
 

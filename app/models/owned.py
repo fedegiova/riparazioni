@@ -66,7 +66,6 @@ class GasCylinder(db.Model):
     # Required: the archive threshold and every balance computation depend on it.
     full_weight = db.Column(db.Float, nullable=False)
     remaining_weight = db.Column(db.Float)
-    picture_ref = db.Column(db.Integer, db.ForeignKey("PICTURES.id"))
     notes = db.Column(db.String(4000))
     # Reversible retire flag; an archived cylinder is hidden from the default
     # list and cannot be offered for recharge/recovery until refilled.
@@ -91,7 +90,6 @@ class GasCylinder(db.Model):
             "model": self.model,
             "full_weight": self.full_weight,
             "remaining_weight": self.remaining_weight,
-            "picture_ref": self.picture_ref,
             "notes": self.notes,
             "archived": self.archived,
         }
@@ -133,7 +131,6 @@ class ServicePart(db.Model):
     kind = db.Column(db.String(64))
     price = db.Column(db.Integer)
     is_refrigerator_part = db.Column(db.Boolean, nullable=False, default=False)
-    picture_ref = db.Column(db.Integer, db.ForeignKey("PICTURES.id"))
     notes = db.Column(db.String(4000))
 
     # passive_deletes: a part used by a repair must not be deletable — the DB
@@ -150,7 +147,6 @@ class ServicePart(db.Model):
             "kind": self.kind,
             "price": self.price,
             "is_refrigerator_part": self.is_refrigerator_part,
-            "picture_ref": self.picture_ref,
             "notes": self.notes,
         }
 
@@ -160,27 +156,21 @@ class Picture(db.Model):
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     # Relative path under UPLOAD_DIR; the file lives at UPLOAD_DIR / path.
-    path = db.Column(db.String(1024), nullable=False)
+    # Unique: the storage service derives a dated name and retries on collision.
+    path = db.Column(db.String(1024), nullable=False, unique=True)
+    # Exactly one owner: 'repair' | 'spare' | 'cylinder' (validated in the
+    # service layer). No junction table — a picture is always attached at upload.
+    owner_type = db.Column(db.String(16), nullable=False)
+    owner_id = db.Column(db.Integer, nullable=False)
     uploaded_by = db.Column(db.String(64))
     uploaded_date = db.Column(db.DateTime, default=_now)
-
-    # passive_deletes: referenced pictures must not be deletable — the DB
-    # foreign keys reject it (HTTP 409).
-    cylinders = db.relationship(
-        "GasCylinder",
-        foreign_keys="GasCylinder.picture_ref",
-        passive_deletes=True,
-    )
-    parts = db.relationship(
-        "ServicePart",
-        foreign_keys="ServicePart.picture_ref",
-        passive_deletes=True,
-    )
 
     def to_dict(self) -> dict:
         return {
             "id": self.id,
             "path": self.path,
+            "owner_type": self.owner_type,
+            "owner_id": self.owner_id,
             "uploaded_by": self.uploaded_by,
             "uploaded_date": self.uploaded_date.isoformat() if self.uploaded_date else None,
         }
@@ -208,6 +198,8 @@ class Repairs(db.Model):
     customer_name = None
     total_hours = 0.0
     gas_used = 0.0
+    # Pictures owned by this repair (owner_type='repair'), attached on read.
+    pictures = None
 
     refrigerator_rel = db.relationship("Refrigerator", back_populates="repairs")
     work_log = db.relationship(
@@ -240,6 +232,7 @@ class Repairs(db.Model):
         if include_details:
             data["work_log"] = [entry.to_dict() for entry in self.work_log]
             data["parts"] = [part.to_dict() for part in self.parts]
+            data["pictures"] = [picture.to_dict() for picture in (self.pictures or [])]
         return data
 
 
