@@ -3,6 +3,7 @@ import { ThemeProvider } from '@mui/material/styles'
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import AppShell from './components/AppShell'
 import AnagraficaPage from './pages/AnagraficaPage'
+import CylinderPage from './pages/CylinderPage'
 import HomePage from './pages/HomePage'
 import MagazzinoPage from './pages/MagazzinoPage'
 import NotFoundPage from './pages/NotFoundPage'
@@ -29,6 +30,7 @@ function App() {
                 element={<WorkLogPage />}
               />
               <Route path="/magazzino" element={<MagazzinoPage />} />
+              <Route path="/magazzino/bombole/:id" element={<CylinderPage />} />
               <Route path="/anagrafica" element={<AnagraficaPage />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="*" element={<NotFoundPage />} />

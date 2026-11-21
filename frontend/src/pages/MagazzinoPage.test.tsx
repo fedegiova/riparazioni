@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { MemoryRouter } from 'react-router-dom'
 import MagazzinoPage from './MagazzinoPage'
 
 const {
@@ -59,10 +60,18 @@ async function waitForDialogToClose() {
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
 }
 
+function renderPage() {
+  return render(
+    <MemoryRouter>
+      <MagazzinoPage />
+    </MemoryRouter>,
+  )
+}
+
 describe('MagazzinoPage', () => {
   it('renders the three tabs with Ricambi selected by default', async () => {
     listServiceParts.mockResolvedValue([regularPart])
-    render(<MagazzinoPage />)
+    renderPage()
 
     expect(screen.getByRole('tab', { name: 'Ricambi' })).toBeTruthy()
     expect(screen.getByRole('tab', { name: 'Ricambi Frigo' })).toBeTruthy()
@@ -84,7 +93,7 @@ describe('MagazzinoPage', () => {
         remaining_weight: 2.5,
       },
     ])
-    render(<MagazzinoPage />)
+    renderPage()
 
     fireEvent.click(screen.getByRole('tab', { name: 'Bombole' }))
 
@@ -98,7 +107,7 @@ describe('MagazzinoPage', () => {
     createServicePart.mockResolvedValue({ id: 3 })
     updateServicePart.mockResolvedValue({ id: 1 })
     deleteServicePart.mockResolvedValue(undefined)
-    render(<MagazzinoPage />)
+    renderPage()
     await screen.findByText('Compressor')
 
     fireEvent.click(screen.getByRole('button', { name: 'New part' }))
@@ -139,7 +148,7 @@ describe('MagazzinoPage', () => {
     createServicePart.mockResolvedValue({ id: 4 })
     updateServicePart.mockResolvedValue({ id: 2 })
     deleteServicePart.mockResolvedValue(undefined)
-    render(<MagazzinoPage />)
+    renderPage()
     fireEvent.click(screen.getByRole('tab', { name: 'Ricambi Frigo' }))
     await screen.findByText('Thermostat')
 

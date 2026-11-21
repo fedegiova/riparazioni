@@ -7,12 +7,12 @@ SQLite tests and on MSSQL in production).
 """
 
 from datetime import UTC, datetime
-from datetime import date as date_cls
+from datetime import date as date_cls, datetime, time
 
 from flask import jsonify, request
 
 from app.extensions import db
-from app.models import GasCylinder, Refill, Refrigerator, ServicePart
+from app.models import GasCylinder, Refill, Refrigerator, RepairWorkLog, ServicePart
 from app.routes.api import bp
 from app.services.errors import BadRequest, NotFound
 
@@ -140,6 +140,13 @@ def update_gas_cylinder(item_id):
     item = _get_or_404(GasCylinder, item_id)
     data = _json_body()
     _validate_full_weight(data, required=False)
+    # The balance is derived from the operation log; it may only be seeded at
+    # creation and moved by refills and gas movements.
+    if "remaining_weight" in data:
+        raise BadRequest(
+            "remaining_weight can only be set at creation; it changes through "
+            "refills and gas movements"
+        )
     for key in CYLINDER_FIELDS:
         if key in data:
             setattr(item, key, data[key])
@@ -217,6 +224,110 @@ def create_gas_cylinder_refill(item_id):
     db.session.add(refill)
     db.session.commit()
     return jsonify(refill.to_dict()), 201
+
+
+# Gas-system states map to the operation kind reported in the cylinder log.
+_GAS_MOVEMENT_KINDS = {
+    "VUOTO": "recharge",
+    "RECUPERO": "recovery",
+    "RICUPERO_RICARICA": "recovery_recharge",
+}
+# Deterministic tie-break when two operations share the same time.
+_OPERATION_ORDER = {
+    "refill": 0,
+    "recharge": 1,
+    "recovery": 2,
+    "recovery_recharge": 3,
+}
+
+
+def _cylinder_operations(cylinder: GasCylinder) -> list[dict]:
+    """Merge a cylinder's refills and gas movements into one newest-first log.
+
+    Derived on read from ``REFILLS`` and the ``REPAIR_WORK_LOG`` rows that
+    reference the cylinder; nothing is persisted. Each entry carries its source
+    reference (the refill's reference text, or the work-log entry's repair id,
+    entry id, and operator) and the cylinder's remaining weight after it.
+    """
+    dated: list[tuple[datetime, int, int, dict]] = []
+
+    for refill in cylinder.refills:
+        when = (
+            datetime.combine(refill.date, time.min) if refill.date else datetime.min
+        )
+        dated.append(
+            (
+                when,
+                _OPERATION_ORDER["refill"],
+                refill.id or 0,
+                {
+                    "kind": "refill",
+                    "id": refill.id,
+                    "date": refill.date.isoformat() if refill.date else None,
+                    "reference": refill.reference,
+                },
+            )
+        )
+
+    movements = (
+        db.session.execute(
+            db.select(RepairWorkLog).where(RepairWorkLog.gas_recharge == cylinder.id)
+        )
+        .scalars()
+        .all()
+    )
+    for entry in movements:
+        kind = _GAS_MOVEMENT_KINDS.get(entry.gas_system_state)
+        if kind is None:
+            # Not a gas-affecting movement (e.g. PIENO, or no state): skip.
+            continue
+        when = entry.start_time or entry.end_time
+        dated.append(
+            (
+                when or datetime.min,
+                _OPERATION_ORDER[kind],
+                entry.id or 0,
+                {
+                    "kind": kind,
+                    "date": when.isoformat() if when else None,
+                    "repair_id": entry.id_repairs,
+                    "work_log_id": entry.id,
+                    "operator": entry.operator,
+                    "gas_system_state": entry.gas_system_state,
+                    "recharged_weight": entry.gas_recharge_weight,
+                    "recovered_weight": entry.gas_recovered_weight,
+                },
+            )
+        )
+
+    # Replay oldest-first from the cylinder's full weight at creation to attach
+    # each entry's resulting balance, then flip back to newest-first.
+    dated.sort(key=lambda item: (item[0], item[1], item[2]))
+
+    full = cylinder.full_weight or 0.0
+    balance = full
+    for _, _, _, entry in dated:
+        kind = entry["kind"]
+        if kind == "refill":
+            balance = full
+        elif kind == "recharge":
+            balance -= entry["recharged_weight"] or 0.0
+        elif kind == "recovery":
+            balance += entry["recovered_weight"] or 0.0
+        elif kind == "recovery_recharge":
+            balance += entry["recovered_weight"] or 0.0
+            balance -= entry["recharged_weight"] or 0.0
+        entry["remaining_weight"] = round(balance, 6)
+
+    dated.reverse()
+    return [item[3] for item in dated]
+
+
+@bp.get("/gas-cylinders/<int:item_id>/operations")
+def list_gas_cylinder_operations(item_id):
+    """The cylinder's gas-affecting history: refills plus gas movements."""
+    cylinder = _get_or_404(GasCylinder, item_id)
+    return jsonify(_cylinder_operations(cylinder))
 
 
 # --- Service parts -----------------------------------------------------------

@@ -252,7 +252,7 @@ paths:
           $ref: "#/components/responses/NotFound"
     put:
       summary: Update a gas cylinder
-      description: Only the fields present in the body are changed. `remaining_weight` may be adjusted manually here; recharge bookkeeping normally updates it.
+      description: Only the fields present in the body are changed. The remaining weight is read-only here; it may be seeded at creation only and moves through refills and gas movements, so a body carrying `remaining_weight` is rejected with 400.
       tags: [equipment]
       requestBody:
         required: true
@@ -356,6 +356,27 @@ paths:
                 $ref: "#/components/schemas/Refill"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/gas-cylinders/{cylinder_id}/operations:
+    parameters:
+      - $ref: "#/components/parameters/CylinderIdParam"
+    get:
+      summary: List a gas cylinder's operation log
+      description: |
+        The cylinder's gas-affecting history, newest first: its refills plus the
+        recharges and recoveries recorded on work-log entries that reference it.
+        Each entry carries its source reference.
+      tags: [equipment]
+      responses:
+        "200":
+          description: List of operations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CylinderOperation"
         "404":
           $ref: "#/components/responses/NotFound"
   /api/v1/service-parts:
@@ -1166,7 +1187,7 @@ components:
           type: number
         remaining_weight:
           type: number
-          description: Defaults to full_weight on create when omitted
+          description: Optional initial balance; accepted only at creation (defaults to full_weight) and rejected on update
         notes:
           type: string
     GasCylinderCreate:
@@ -1198,6 +1219,54 @@ components:
         reference:
           type: string
           nullable: true
+    CylinderOperation:
+      type: object
+      required: [kind]
+      description: |
+        One gas-affecting operation on a cylinder: a refill, or a recharge or
+        recovery recorded on a work-log entry that references the cylinder.
+      properties:
+        kind:
+          type: string
+          enum: [refill, recharge, recovery, recovery_recharge]
+        id:
+          type: integer
+          nullable: true
+          description: Refill id (refill entries only)
+        date:
+          type: string
+          nullable: true
+          description: Refill date, or the work-log entry's start time
+        reference:
+          type: string
+          nullable: true
+          description: Refill reference text (refill entries only)
+        repair_id:
+          type: integer
+          nullable: true
+          description: Source repair (movement entries only)
+        work_log_id:
+          type: integer
+          nullable: true
+          description: Source work-log entry (movement entries only)
+        operator:
+          type: string
+          nullable: true
+          description: Operator that recorded the movement (movement entries only)
+        gas_system_state:
+          type: string
+          nullable: true
+          description: Gas system state of the movement (movement entries only)
+        recharged_weight:
+          type: number
+          nullable: true
+        recovered_weight:
+          type: number
+          nullable: true
+        remaining_weight:
+          type: number
+          nullable: true
+          description: Cylinder balance after this operation
     ServicePart:
       type: object
       required: [id]

@@ -1,5 +1,6 @@
 import { api } from './client'
 import type {
+  CylinderOperation,
   GasCylinder,
   GasCylinderInput,
   Refill,
@@ -59,6 +60,13 @@ export async function listGasCylinders(
   return data ?? []
 }
 
+export async function getGasCylinder(id: number): Promise<GasCylinder> {
+  const { data } = await api.GET('/api/v1/gas-cylinders/{cylinder_id}', {
+    params: { path: { cylinder_id: id } },
+  })
+  return data as GasCylinder
+}
+
 export async function createGasCylinder(
   input: GasCylinderInput,
 ): Promise<GasCylinder> {
@@ -103,6 +111,18 @@ export async function listGasCylinderRefills(id: number): Promise<Refill[]> {
   const { data } = await api.GET('/api/v1/gas-cylinders/{cylinder_id}/refills', {
     params: { path: { cylinder_id: id } },
   })
+  return data ?? []
+}
+
+export async function getCylinderOperations(
+  id: number,
+): Promise<CylinderOperation[]> {
+  const { data } = await api.GET(
+    '/api/v1/gas-cylinders/{cylinder_id}/operations',
+    {
+      params: { path: { cylinder_id: id } },
+    },
+  )
   return data ?? []
 }
 

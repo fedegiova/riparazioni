@@ -24,6 +24,8 @@ import {
 } from '@mui/material'
 import DeleteIcon from '@mui/icons-material/Delete'
 import EditIcon from '@mui/icons-material/Edit'
+import HistoryIcon from '@mui/icons-material/History'
+import { useNavigate } from 'react-router-dom'
 import {
   archiveGasCylinder,
   createGasCylinder,
@@ -67,15 +69,20 @@ function toDraft(cylinder: GasCylinder): CylinderDraft {
   }
 }
 
-function toInput(draft: CylinderDraft): GasCylinderInput {
+function toInput(draft: CylinderDraft, includeBalance = false): GasCylinderInput {
   return {
     gas_kind: draft.gas_kind || undefined,
     serial_nr: draft.serial_nr || undefined,
     model: draft.model || undefined,
     full_weight: draft.full_weight ? Number(draft.full_weight) : undefined,
-    remaining_weight: draft.remaining_weight
-      ? Number(draft.remaining_weight)
-      : undefined,
+    // The balance is seeded at creation only; the update path rejects it.
+    ...(includeBalance
+      ? {
+          remaining_weight: draft.remaining_weight
+            ? Number(draft.remaining_weight)
+            : undefined,
+        }
+      : {}),
     notes: draft.notes || undefined,
   }
 }
@@ -111,6 +118,7 @@ function todayIso(): string {
 }
 
 function CylindersManager() {
+  const navigate = useNavigate()
   const [showArchived, setShowArchived] = useState(false)
   const { data, error, loading, reload } = useApi(
     () => listGasCylinders(showArchived),
@@ -171,11 +179,16 @@ function CylindersManager() {
       if (draft.full_weight.trim() === '' || Number.isNaN(Number(draft.full_weight))) {
         throw new Error('Full weight is required')
       }
+      if (editing === null && draft.remaining_weight.trim() !== '') {
+        if (Number(draft.remaining_weight) > Number(draft.full_weight)) {
+          throw new Error('Remaining weight cannot exceed the full weight')
+        }
+      }
       const input = toInput(draft)
       if (editing) {
         await updateGasCylinder(editing.id, input)
       } else {
-        await createGasCylinder(input)
+        await createGasCylinder(toInput(draft, true))
       }
       setFormOpen(false)
       await reload()
@@ -308,6 +321,12 @@ function CylindersManager() {
                   </TableCell>
                   <TableCell align="right">
                     <IconButton
+                      aria-label={`Log ${label(cylinder)}`}
+                      onClick={() => navigate(`/magazzino/bombole/${cylinder.id}`)}
+                    >
+                      <HistoryIcon />
+                    </IconButton>
+                    <IconButton
                       aria-label={`Edit ${label(cylinder)}`}
                       onClick={() => openEdit(cylinder)}
                     >
@@ -424,6 +443,12 @@ function CylindersManager() {
               label="Remaining weight"
               type="number"
               value={draft.remaining_weight}
+              disabled={editing !== null}
+              helperText={
+                editing
+                  ? 'The balance changes only through refills and gas movements'
+                  : 'Defaults to the full weight'
+              }
               onChange={(event) =>
                 setDraft((current) => ({
                   ...current,

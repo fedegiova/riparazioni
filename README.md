@@ -116,13 +116,20 @@ file), `405` (writes to read-only resources), `409` (referential conflict).
 - `GET/POST /api/v1/refrigerators`, `GET/PUT/DELETE /api/v1/refrigerators/<id>`
 - `GET/POST /api/v1/gas-cylinders`, `GET/PUT/DELETE /api/v1/gas-cylinders/<id>`
   — `full_weight` is required; on create, `remaining_weight` defaults to
-  `full_weight` when omitted; the list hides archived cylinders unless
-  `?archived=true`
+  `full_weight` when omitted and may be seeded once; on update it is rejected
+  (the balance moves only through refills and gas movements). The list hides
+  archived cylinders unless `?archived=true`
 - `POST /api/v1/gas-cylinders/<id>/archive`, `POST /api/v1/gas-cylinders/<id>/restore`
   — archive only when `remaining_weight < full_weight / 4`; restoring leaves
   the balance unchanged
 - `GET/POST /api/v1/gas-cylinders/<id>/refills` — a refill (date, optional
   reference) restores the cylinder to its full weight and unarchives it
+- `GET /api/v1/gas-cylinders/<id>/operations` — the cylinder's gas-affecting
+  history, newest first: its refills plus the recharges/recoveries recorded on
+  work-log entries that reference it. Each entry has a `kind`
+  (`refill`/`recharge`/`recovery`/`recovery_recharge`), its `date`, weights, the
+  `remaining_weight` after the operation, and its source reference: a refill's
+  `reference` text, or a movement's `repair_id`, `work_log_id`, and `operator`
 - `GET/POST /api/v1/service-parts`, `GET/PUT/DELETE /api/v1/service-parts/<id>`
   — list filter: `?is_refrigerator_part=true|false`
 

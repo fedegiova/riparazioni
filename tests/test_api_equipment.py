@@ -1,5 +1,7 @@
 """Equipment CRUD API tests (tasks 3.1-3.3)."""
 
+from datetime import datetime
+
 from app.models import RepairPart, Repairs, RepairWorkLog
 
 
@@ -75,6 +77,24 @@ class TestGasCylinders:
             f"/api/v1/gas-cylinders/{created['id']}", json={"full_weight": None}
         )
         assert response.status_code == 400
+
+    def test_update_remaining_weight_rejected(self, client, db):
+        created = client.post(
+            "/api/v1/gas-cylinders",
+            json={"full_weight": 10.0, "remaining_weight": 4.0},
+        ).get_json()
+        response = client.put(
+            f"/api/v1/gas-cylinders/{created['id']}", json={"remaining_weight": 8.0}
+        )
+        assert response.status_code == 400
+        assert "remaining_weight" in response.get_json()["error"]
+        # Balance unchanged.
+        assert (
+            client.get(f"/api/v1/gas-cylinders/{created['id']}").get_json()[
+                "remaining_weight"
+            ]
+            == 4.0
+        )
 
     def test_create_defaults_remaining_to_full(self, client, db):
         response = client.post(
@@ -227,6 +247,165 @@ class TestGasCylinders:
             active["id"],
             to_archive["id"],
         }
+
+
+class TestCylinderOperations:
+    def test_log_merges_refills_and_movements_newest_first(self, client, db):
+        cylinder = client.post(
+            "/api/v1/gas-cylinders", json={"full_weight": 10.0}
+        ).get_json()
+        client.post(
+            f"/api/v1/gas-cylinders/{cylinder['id']}/refills",
+            json={"date": "2026-02-01", "reference": "RIF-1"},
+        )
+        repair_id = _new_repair(db)
+        recharge = RepairWorkLog(
+            id_repairs=repair_id,
+            gas_recharge=cylinder["id"],
+            gas_system_state="VUOTO",
+            gas_recharge_weight=2.5,
+            operator="Mario",
+            start_time=datetime(2026, 3, 1, 9, 0),
+        )
+        recovery = RepairWorkLog(
+            id_repairs=repair_id,
+            gas_recharge=cylinder["id"],
+            gas_system_state="RECUPERO",
+            gas_recovered_weight=1.0,
+            operator="Luigi",
+            start_time=datetime(2026, 2, 15, 9, 0),
+        )
+        db.session.add_all([recharge, recovery])
+        db.session.commit()
+
+        response = client.get(f"/api/v1/gas-cylinders/{cylinder['id']}/operations")
+        assert response.status_code == 200
+        log = response.get_json()
+        assert [entry["kind"] for entry in log] == ["recharge", "recovery", "refill"]
+
+        recharge_entry = log[0]
+        assert recharge_entry["repair_id"] == repair_id
+        assert recharge_entry["work_log_id"] == recharge.id
+        assert recharge_entry["operator"] == "Mario"
+        assert recharge_entry["recharged_weight"] == 2.5
+
+        recovery_entry = log[1]
+        assert recovery_entry["work_log_id"] == recovery.id
+        assert recovery_entry["recovered_weight"] == 1.0
+
+        refill_entry = log[2]
+        assert refill_entry["date"] == "2026-02-01"
+        assert refill_entry["reference"] == "RIF-1"
+
+    def test_recover_and_recharge_movement_kind(self, client, db):
+        cylinder = client.post(
+            "/api/v1/gas-cylinders", json={"full_weight": 10.0}
+        ).get_json()
+        repair_id = _new_repair(db)
+        db.session.add(
+            RepairWorkLog(
+                id_repairs=repair_id,
+                gas_recharge=cylinder["id"],
+                gas_system_state="RICUPERO_RICARICA",
+                gas_recharge_weight=2.0,
+                gas_recovered_weight=1.0,
+                start_time=datetime(2026, 4, 1, 9, 0),
+            )
+        )
+        db.session.commit()
+
+        log = client.get(f"/api/v1/gas-cylinders/{cylinder['id']}/operations").get_json()
+        assert log[0]["kind"] == "recovery_recharge"
+        assert log[0]["recharged_weight"] == 2.0
+        assert log[0]["recovered_weight"] == 1.0
+        # 10.0 full + 1.0 recovered - 2.0 recharged
+        assert log[0]["remaining_weight"] == 9.0
+
+    def test_log_reports_running_remaining_weight(self, client, db):
+        cylinder = client.post(
+            "/api/v1/gas-cylinders", json={"full_weight": 10.0}
+        ).get_json()
+        repair_id = _new_repair(db)
+        db.session.add_all(
+            [
+                RepairWorkLog(
+                    id_repairs=repair_id,
+                    gas_recharge=cylinder["id"],
+                    gas_system_state="VUOTO",
+                    gas_recharge_weight=2.5,
+                    start_time=datetime(2026, 2, 15, 9, 0),
+                ),
+                RepairWorkLog(
+                    id_repairs=repair_id,
+                    gas_recharge=cylinder["id"],
+                    gas_system_state="RECUPERO",
+                    gas_recovered_weight=1.0,
+                    start_time=datetime(2026, 3, 1, 9, 0),
+                ),
+            ]
+        )
+        db.session.commit()
+
+        log = client.get(f"/api/v1/gas-cylinders/{cylinder['id']}/operations").get_json()
+        assert [entry["kind"] for entry in log] == ["recovery", "recharge"]
+        assert log[0]["remaining_weight"] == 8.5  # 10.0 - 2.5 + 1.0
+        assert log[1]["remaining_weight"] == 7.5  # 10.0 - 2.5
+
+    def test_refill_resets_running_balance(self, client, db):
+        cylinder = client.post(
+            "/api/v1/gas-cylinders", json={"full_weight": 10.0}
+        ).get_json()
+        repair_id = _new_repair(db)
+        db.session.add(
+            RepairWorkLog(
+                id_repairs=repair_id,
+                gas_recharge=cylinder["id"],
+                gas_system_state="VUOTO",
+                gas_recharge_weight=8.0,
+                start_time=datetime(2026, 2, 1, 9, 0),
+            )
+        )
+        db.session.commit()
+        client.post(
+            f"/api/v1/gas-cylinders/{cylinder['id']}/refills",
+            json={"date": "2026-02-10", "reference": "RIF"},
+        )
+
+        log = client.get(f"/api/v1/gas-cylinders/{cylinder['id']}/operations").get_json()
+        assert [entry["kind"] for entry in log] == ["refill", "recharge"]
+        assert log[0]["remaining_weight"] == 10.0  # refill resets to full
+        assert log[1]["remaining_weight"] == 2.0  # 10.0 - 8.0
+
+    def test_log_excludes_other_cylinders(self, client, db):
+        mine = client.post(
+            "/api/v1/gas-cylinders", json={"full_weight": 10.0}
+        ).get_json()
+        other = client.post(
+            "/api/v1/gas-cylinders", json={"full_weight": 10.0}
+        ).get_json()
+        repair_id = _new_repair(db)
+        db.session.add(
+            RepairWorkLog(
+                id_repairs=repair_id,
+                gas_recharge=other["id"],
+                gas_system_state="VUOTO",
+                gas_recharge_weight=1.0,
+                start_time=datetime(2026, 3, 1, 9, 0),
+            )
+        )
+        db.session.commit()
+
+        log = client.get(f"/api/v1/gas-cylinders/{mine['id']}/operations").get_json()
+        assert log == []
+
+    def test_log_empty_and_unknown(self, client, db):
+        cylinder = client.post(
+            "/api/v1/gas-cylinders", json={"full_weight": 10.0}
+        ).get_json()
+        response = client.get(f"/api/v1/gas-cylinders/{cylinder['id']}/operations")
+        assert response.status_code == 200
+        assert response.get_json() == []
+        assert client.get("/api/v1/gas-cylinders/99999/operations").status_code == 404
 
 
 class TestServiceParts:

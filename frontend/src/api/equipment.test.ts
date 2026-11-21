@@ -18,6 +18,8 @@ import {
   createServicePart,
   deleteGasCylinder,
   deleteServicePart,
+  getCylinderOperations,
+  getGasCylinder,
   listGasCylinderRefills,
   listGasCylinders,
   listServiceParts,
@@ -185,5 +187,24 @@ describe('gas cylinder API wrappers', () => {
         body: {},
       },
     )
+  })
+
+  it('lists the operations of a cylinder', async () => {
+    api.GET.mockResolvedValue({ data: [{ kind: 'refill' }] })
+
+    await expect(getCylinderOperations(7)).resolves.toEqual([{ kind: 'refill' }])
+    expect(api.GET).toHaveBeenCalledWith(
+      '/api/v1/gas-cylinders/{cylinder_id}/operations',
+      { params: { path: { cylinder_id: 7 } } },
+    )
+  })
+
+  it('gets a single cylinder by id', async () => {
+    api.GET.mockResolvedValue({ data: { id: 7, full_weight: 10 } })
+
+    await expect(getGasCylinder(7)).resolves.toEqual({ id: 7, full_weight: 10 })
+    expect(api.GET).toHaveBeenCalledWith('/api/v1/gas-cylinders/{cylinder_id}', {
+      params: { path: { cylinder_id: 7 } },
+    })
   })
 })

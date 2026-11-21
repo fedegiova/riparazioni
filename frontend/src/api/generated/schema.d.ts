@@ -504,7 +504,7 @@ export interface paths {
         };
         /**
          * Update a gas cylinder
-         * @description Only the fields present in the body are changed. `remaining_weight` may be adjusted manually here; recharge bookkeeping normally updates it.
+         * @description Only the fields present in the body are changed. The remaining weight is read-only here; it may be seeded at creation only and moves through refills and gas movements, so a body carrying `remaining_weight` is rejected with 400.
          */
         put: {
             parameters: {
@@ -721,6 +721,52 @@ export interface paths {
                 404: components["responses"]["NotFound"];
             };
         };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/gas-cylinders/{cylinder_id}/operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cylinder_id: components["parameters"]["CylinderIdParam"];
+            };
+            cookie?: never;
+        };
+        /**
+         * List a gas cylinder's operation log
+         * @description The cylinder's gas-affecting history, newest first: its refills plus the
+         *     recharges and recoveries recorded on work-log entries that reference it.
+         *     Each entry carries its source reference.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    cylinder_id: components["parameters"]["CylinderIdParam"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description List of operations */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CylinderOperation"][];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1720,7 +1766,7 @@ export interface components {
             serial_nr?: string;
             model?: string;
             full_weight?: number;
-            /** @description Defaults to full_weight on create when omitted */
+            /** @description Optional initial balance; accepted only at creation (defaults to full_weight) and rejected on update */
             remaining_weight?: number;
             notes?: string;
         };
@@ -1739,6 +1785,32 @@ export interface components {
              */
             date?: string;
             reference?: string | null;
+        };
+        /**
+         * @description One gas-affecting operation on a cylinder: a refill, or a recharge or
+         *     recovery recorded on a work-log entry that references the cylinder.
+         */
+        CylinderOperation: {
+            /** @enum {string} */
+            kind: "refill" | "recharge" | "recovery" | "recovery_recharge";
+            /** @description Refill id (refill entries only) */
+            id?: number | null;
+            /** @description Refill date, or the work-log entry's start time */
+            date?: string | null;
+            /** @description Refill reference text (refill entries only) */
+            reference?: string | null;
+            /** @description Source repair (movement entries only) */
+            repair_id?: number | null;
+            /** @description Source work-log entry (movement entries only) */
+            work_log_id?: number | null;
+            /** @description Operator that recorded the movement (movement entries only) */
+            operator?: string | null;
+            /** @description Gas system state of the movement (movement entries only) */
+            gas_system_state?: string | null;
+            recharged_weight?: number | null;
+            recovered_weight?: number | null;
+            /** @description Cylinder balance after this operation */
+            remaining_weight?: number | null;
         };
         ServicePart: {
             id: number;
