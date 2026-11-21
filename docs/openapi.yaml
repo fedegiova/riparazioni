@@ -1159,6 +1159,9 @@ components:
           type: integer
         vehicle:
           type: integer
+        start_data:
+          type: string
+          format: date-time
         refrigerator:
           type: integer
           nullable: true

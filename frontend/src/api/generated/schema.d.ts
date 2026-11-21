@@ -914,7 +914,6 @@ export interface paths {
                     customer?: number;
                     vehicle?: number;
                     refrigerator?: number;
-                    type?: "RIPA" | "RIPA_FRIGO";
                     start_date_from?: string;
                     start_date_to?: string;
                 };
@@ -939,9 +938,8 @@ export interface paths {
         put?: never;
         /**
          * Create a repair
-         * @description `type` is required. `customer` and `vehicle` are validated against the legacy
-         *     reference data (409 when unknown). `start_data` defaults to the current time
-         *     when omitted.
+         * @description `customer` and `vehicle` are validated against the legacy reference data
+         *     (409 when unknown). `start_data` defaults to the current time when omitted.
          */
         post: {
             parameters: {
@@ -969,6 +967,53 @@ export interface paths {
                 409: components["responses"]["Conflict"];
             };
         };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/repairs/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export repairs as an Excel workbook
+         * @description Honors the same filters as the repairs list and returns a real `.xlsx`
+         *     workbook (one row per matching repair) as a download.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    customer?: number;
+                    vehicle?: number;
+                    refrigerator?: number;
+                    start_date_from?: string;
+                    start_date_to?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Excel workbook */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": string;
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+            };
+        };
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1116,7 +1161,7 @@ export interface paths {
          *
          *     - a recharge needs both `gas_recharge` (cylinder id) and `gas_recharge_weight`;
          *       one without the other is rejected (400);
-         *     - for `RIPA_FRIGO` repairs an entry carrying gas data needs a `gas_system_state`;
+         *     - any entry carrying gas data needs a `gas_system_state`;
          *     - `PIENO` entries must not carry cylinder or weight data;
          *     - the cylinder's `remaining_weight` is decreased by the recharged weight in the
          *       same transaction;
@@ -1378,10 +1423,10 @@ export interface components {
             id: number;
             /** @description VICLIENTI id */
             customer?: number | null;
+            /** @description Resolved from the customers reference data; null when unknown */
+            customer_name: string | null;
             /** @description TBALLESTIMENTI.ID_INT */
             vehicle?: number | null;
-            /** @enum {string} */
-            type: "RIPA" | "RIPA_FRIGO";
             refrigerator?: number | null;
             /** Format: date-time */
             start_data: string;
@@ -1390,6 +1435,13 @@ export interface components {
              * @description null while the repair is open
              */
             end_data?: string | null;
+            /**
+             * Format: date
+             * @description Delivery date requested by the customer
+             */
+            delivery_date?: string | null;
+            /** @description Sum of the repair's work-log durations, in hours */
+            total_hours: number;
             notes?: string;
         };
         RepairDetail: components["schemas"]["Repair"] & {
@@ -1397,8 +1449,6 @@ export interface components {
             parts?: components["schemas"]["RepairPart"][];
         };
         RepairCreate: {
-            /** @enum {string} */
-            type: "RIPA" | "RIPA_FRIGO";
             /** @description Must exist in the customers reference data (409 otherwise) */
             customer?: number;
             /** @description Must exist in the vehicles reference data (409 otherwise) */
@@ -1409,15 +1459,20 @@ export interface components {
              * @description Defaults to the current time when omitted
              */
             start_data?: string;
+            /**
+             * Format: date
+             * @description Delivery date requested by the customer
+             */
+            delivery_date?: string | null;
             notes?: string;
             parts?: components["schemas"]["RepairPartRef"][];
         };
         /** @description Partial update: only the fields present are changed */
         RepairUpdate: {
-            /** @enum {string} */
-            type?: "RIPA" | "RIPA_FRIGO";
             customer?: number;
             vehicle?: number;
+            /** Format: date-time */
+            start_data?: string;
             refrigerator?: number | null;
             notes?: string;
             /**
@@ -1425,6 +1480,11 @@ export interface components {
              * @description Set to complete the repair, null to reopen it
              */
             end_data?: string | null;
+            /**
+             * Format: date
+             * @description Delivery date requested by the customer (null clears it)
+             */
+            delivery_date?: string | null;
             /** @description When present, replaces the full part set */
             parts?: components["schemas"]["RepairPartRef"][];
         };

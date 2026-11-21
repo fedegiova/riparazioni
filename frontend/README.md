@@ -40,11 +40,27 @@ relying on data from the app.
 
 ```
 src/
-  App.tsx             # ThemeProvider + CssBaseline + BrowserRouter + shell (AppBar)
+  App.tsx             # ThemeProvider + CssBaseline + BrowserRouter + route map
   theme.ts            # MUI theme — the single place to rebrand
-  pages/              # Routed pages (HomePage at /, NotFoundPage on catch-all)
-  api/client.ts       # Shared /api/v1 client: generated types + ApiError envelope decoding
-  api/generated/      # Generated from docs/openapi.yaml (committed — see "API client")
+  components/
+    AppShell.tsx      # App bar (home), breadcrumbs, bottom nav, routed content
+    SearchModal.tsx   # Cached, client-filtered reference picker (customers/vehicles/parts)
+  pages/
+    HomePage.tsx        # Active repairs (landing at /)
+    RepairsListPage.tsx # All repairs, filters, delete, Excel export
+    RepairPage.tsx      # New/edit repair, parts table, work-log table, archive
+    WorkLogPage.tsx     # Work-log entry editor (times, operator, gas recharge)
+    MagazzinoPage.tsx   # Placeholder
+    AnagraficaPage.tsx  # Placeholder
+    NotFoundPage.tsx    # Catch-all
+  api/
+    client.ts         # Shared /api/v1 client: generated types + ApiError envelope decoding
+    repairs.ts        # Repairs/work-log data access + export URL
+    reference.ts      # Customers and vehicles
+    equipment.ts      # Service parts and gas cylinders
+    generated/        # Generated from docs/openapi.yaml (committed — see "API client")
+  hooks/useApi.ts     # Minimal loading/error hook over the shared client
+  lib/                # format.ts (hours/dates) and download.ts
   test/setup.ts       # Vitest setup: browser-like relative-URL Request shim for jsdom
 ```
 
@@ -64,5 +80,6 @@ npm run generate:api
 The runtime is `openapi-fetch` (a thin typed wrapper over `fetch`); the
 `generate:api` tool is `openapi-typescript`.
 
-Feature screens (repairs, equipment, pictures) are planned as follow-up
-changes on top of this shell.
+The repairs screens (landing, list with search/export, repair detail with parts
+and work log, work-log editor) are implemented. The Magazzino, Anagrafica, and
+Ricambi screens remain planned as follow-up changes on top of this shell.
