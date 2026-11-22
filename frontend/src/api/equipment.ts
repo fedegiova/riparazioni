@@ -5,9 +5,69 @@ import type {
   GasCylinderInput,
   Refill,
   RefillInput,
+  Refrigerator,
+  RefrigeratorInput,
   ServicePart,
   ServicePartInput,
 } from './types'
+
+// --- Refrigerators -----------------------------------------------------------
+
+export async function listRefrigerators(
+  allestimentoId?: number,
+): Promise<Refrigerator[]> {
+  const { data } = await api.GET('/api/v1/refrigerators', {
+    params: {
+      query:
+        allestimentoId === undefined
+          ? {}
+          : { allestimento_id: allestimentoId },
+    },
+  })
+  return data ?? []
+}
+
+export async function createRefrigerator(
+  input: RefrigeratorInput,
+): Promise<Refrigerator> {
+  const { data } = await api.POST('/api/v1/refrigerators', { body: input })
+  return data as Refrigerator
+}
+
+export async function getRefrigerator(id: number): Promise<Refrigerator> {
+  const { data } = await api.GET('/api/v1/refrigerators/{refrigerator_id}', {
+    params: { path: { refrigerator_id: id } },
+  })
+  return data as Refrigerator
+}
+
+export async function updateRefrigerator(
+  id: number,
+  input: RefrigeratorInput,
+): Promise<Refrigerator> {
+  const { data } = await api.PUT('/api/v1/refrigerators/{refrigerator_id}', {
+    params: { path: { refrigerator_id: id } },
+    body: input,
+  })
+  return data as Refrigerator
+}
+
+export async function installRefrigerator(
+  id: number,
+  allestimentoId: number,
+): Promise<Refrigerator> {
+  const { data } = await api.POST('/api/v1/refrigerators/{refrigerator_id}/install', {
+    params: { path: { refrigerator_id: id } },
+    body: { allestimento_id: allestimentoId },
+  })
+  return data as Refrigerator
+}
+
+export async function deleteRefrigerator(id: number): Promise<void> {
+  await api.DELETE('/api/v1/refrigerators/{refrigerator_id}', {
+    params: { path: { refrigerator_id: id } },
+  })
+}
 
 // --- Service parts -----------------------------------------------------------
 

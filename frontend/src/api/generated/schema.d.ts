@@ -251,10 +251,17 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List refrigerators */
+        /**
+         * List refrigerators
+         * @description All refrigerator records. Filter by `allestimento_id` to find the unit
+         *     currently installed on a vehicle.
+         */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description Only refrigerators installed on this allestimento */
+                    allestimento_id?: number;
+                };
                 header?: never;
                 path?: never;
                 cookie?: never;
@@ -394,6 +401,62 @@ export interface paths {
                 409: components["responses"]["Conflict"];
             };
         };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/refrigerators/{refrigerator_id}/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                refrigerator_id: components["parameters"]["RefrigeratorIdParam"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Install a refrigerator on an allestimento
+         * @description Explicit replacement: detaches any unit currently installed on the
+         *     target allestimento and links this record instead, atomically. The
+         *     record must carry complete nameplate data (serial number, manufacturer,
+         *     model, positive `gas_kg`, and a configured `gas_kind`).
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    refrigerator_id: components["parameters"]["RefrigeratorIdParam"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /** @description TBALLESTIMENTI.ID_INT to install the unit on */
+                        allestimento_id: number;
+                    };
+                };
+            };
+            responses: {
+                /** @description Installed refrigerator */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Refrigerator"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+            };
+        };
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1434,15 +1497,24 @@ export interface paths {
          *
          *     Gas recharge rules:
          *
-         *     - a recharge needs both `gas_recharge` (cylinder id) and `gas_recharge_weight`;
-         *       one without the other is rejected (400);
-         *     - any entry carrying gas data needs a `gas_system_state`;
-         *     - `PIENO` entries must not carry cylinder or weight data;
-         *     - the cylinder's `remaining_weight` is decreased by the recharged weight in the
-         *       same transaction;
-         *     - recharging more than the cylinder's remaining weight is rejected (400) and
-         *       leaves the balance unchanged;
-         *     - an unknown cylinder id is rejected (409).
+         *     - `gas_operation` selects the work: `none`, `fill`, `recovery`, or
+         *       `recovery_recharge`; any other value (or gas data without an
+         *       operation) is rejected (400);
+         *     - a fill or combined operation needs `gas_recharge` (cylinder id) and a
+         *       finite `gas_measured_kg`;
+         *     - `fill` needs a positive amount at or below the refrigerator's
+         *       nameplate capacity (`gas_kg`);
+         *     - `recovery` needs a non-negative recovered amount;
+         *     - `recovery_recharge` needs a net added amount between 0 and the
+         *       nameplate capacity; the recharged weight is the nameplate and the
+         *       recovered weight is calculated as nameplate minus the net addition;
+         *     - the refrigerator installed on the repair's allestimento must have the
+         *       same gas type as the cylinder, and is locked to the repair by the
+         *       first gas operation;
+         *     - the movement is applied to the cylinder's `remaining_weight` in the
+         *       same transaction and rejected (400) when it would leave the balance
+         *       below zero or above the cylinder's full weight;
+         *     - an unknown cylinder id or a missing installation is rejected (400 or 409).
          */
         post: {
             parameters: {
@@ -1790,6 +1862,10 @@ export interface components {
             brand?: string;
             gas_kg?: number;
             notes?: string;
+            /** @description TBALLESTIMENTI.ID_INT the unit is installed on; null when uninstalled */
+            allestimento_id?: number | null;
+            /** @description Gas type, drawn from the configured gas_types setting */
+            gas_kind?: string | null;
         };
         RefrigeratorInput: {
             serial_nr?: string;
@@ -1797,6 +1873,9 @@ export interface components {
             brand?: string;
             gas_kg?: number;
             notes?: string;
+            /** @description Install on this allestimento (409 when one is already installed) */
+            allestimento_id?: number | null;
+            gas_kind?: string | null;
         };
         GasCylinder: {
             id: number;
@@ -1854,10 +1933,18 @@ export interface components {
             work_log_id?: number | null;
             /** @description Operator that recorded the movement (movement entries only) */
             operator?: string | null;
-            /** @description Gas system state of the movement (movement entries only) */
-            gas_system_state?: string | null;
+            /**
+             * @description Gas operation of the movement (movement entries only)
+             * @enum {string|null}
+             */
+            gas_operation?: "fill" | "recovery" | "recovery_recharge" | null;
             recharged_weight?: number | null;
+            /** @description Recovered gas; calculated (nameplate minus net added) for a combined operation */
             recovered_weight?: number | null;
+            /** @description Measured net added gas for a combined operation (movement entries only) */
+            net_added_weight?: number | null;
+            /** @description True when the recovered weight is calculated, not measured */
+            recovered_calculated?: boolean | null;
             /** @description Cylinder balance after this operation */
             remaining_weight?: number | null;
         };
@@ -1917,6 +2004,11 @@ export interface components {
             /** @description TBALLESTIMENTI.ID_INT */
             vehicle?: number | null;
             refrigerator?: number | null;
+            /**
+             * @description Set when the repair's first gas operation froze its vehicle and
+             *     refrigerator. While set, those fields cannot be changed.
+             */
+            gas_equipment_locked?: boolean;
             /** Format: date-time */
             start_data: string;
             /**
@@ -1942,6 +2034,11 @@ export interface components {
             notes?: string;
         };
         RepairDetail: components["schemas"]["Repair"] & {
+            /**
+             * @description Whether the repair's recorded refrigerator is still installed on
+             *     its allestimento; null when no refrigerator is recorded.
+             */
+            refrigerator_installed?: boolean | null;
             work_log?: components["schemas"]["WorkLogEntry"][];
             parts?: components["schemas"]["RepairPart"][];
             pictures?: components["schemas"]["Picture"][];
@@ -1999,16 +2096,24 @@ export interface components {
             /** @description Free-text note about the work performed */
             description?: string | null;
             /**
-             * @description Gas system state of the operation
+             * @description Gas operation; null for ordinary work
              * @enum {string|null}
              */
-            gas_system_state?: "VUOTO" | "PIENO" | "RECUPERO" | "RICUPERO_RICARICA" | null;
-            /** @description Cylinder id used for the recharge */
+            gas_operation?: "none" | "fill" | "recovery" | "recovery_recharge" | null;
+            /** @description Cylinder id used for the movement */
             gas_recharge?: number | null;
-            /** @description Kg of gas recharged */
-            gas_recharge_weight?: number | null;
-            /** @description Kg of gas recovered; adds to the cylinder balance */
-            gas_recovered_weight?: number | null;
+            /**
+             * @description The single measured mass in kg: the added amount (fill), the
+             *     recovered amount (recovery), or the net added amount
+             *     (recovery_recharge)
+             */
+            gas_measured_kg?: number | null;
+            /** @description Nameplate capacity used for a combined operation */
+            gas_nameplate_kg?: number | null;
+            /** @description Gross gas recharged, in kg (the nameplate for a combined operation) */
+            recharged_weight?: number | null;
+            /** @description Gas recovered, in kg (calculated for a combined operation) */
+            recovered_weight?: number | null;
         };
         /**
          * @description Create a running or historical work log. `operator` must be one of the
@@ -2024,18 +2129,29 @@ export interface components {
             /** @description A configured operator name */
             operator: string;
             description?: string | null;
-            /** @enum {string|null} */
-            gas_system_state?: "VUOTO" | "PIENO" | "RECUPERO" | "RICUPERO_RICARICA" | null;
+            /**
+             * @description Gas operation; omit for ordinary work
+             * @enum {string|null}
+             */
+            gas_operation?: "none" | "fill" | "recovery" | "recovery_recharge" | null;
+            /** @description Cylinder id */
             gas_recharge?: number | null;
-            gas_recharge_weight?: number | null;
-            gas_recovered_weight?: number | null;
+            /** @description The measured amount in kg for fill, recovery, or recovery_recharge */
+            gas_measured_kg?: number | null;
+            /**
+             * @description The refrigerator id the client displayed. If the installed unit has
+             *     changed, the write is rejected (409) rather than bound to the
+             *     replacement.
+             */
+            expected_refrigerator?: number | null;
         };
         /**
-         * @description Partial update of a work log. Every field is optional; non-gas fields are
-         *     patched individually. If any gas field is present the whole gas dataset
-         *     (state, cylinder, weights) is replaced. An omitted operator keeps the
-         *     stored one; a changed operator must be configured. Archived repairs are
-         *     read-only (409) until reopened.
+         * @description Partial update of a work log. Every field is optional; non-gas fields
+         *     are patched individually. Omitting every gas field leaves the stored
+         *     movement unchanged; a present `gas_operation` replaces the whole gas
+         *     dataset (and `none` clears and reverses it). An omitted operator keeps
+         *     the stored one; a changed operator must be configured. Archived repairs
+         *     are read-only (409) until reopened.
          */
         WorkLogInput: {
             /** Format: date-time */
@@ -2045,10 +2161,10 @@ export interface components {
             operator?: string;
             description?: string | null;
             /** @enum {string|null} */
-            gas_system_state?: "VUOTO" | "PIENO" | "RECUPERO" | "RICUPERO_RICARICA" | null;
+            gas_operation?: "none" | "fill" | "recovery" | "recovery_recharge" | null;
             gas_recharge?: number | null;
-            gas_recharge_weight?: number | null;
-            gas_recovered_weight?: number | null;
+            gas_measured_kg?: number | null;
+            expected_refrigerator?: number | null;
         };
         /** @description A name-to-value map of application settings. Values are JSON documents. */
         SettingsMap: {

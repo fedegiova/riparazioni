@@ -13,6 +13,7 @@ const {
   listVehicles,
   getVehicle,
   listServiceParts,
+  getRefrigerator,
   uploadPicture,
   deletePicture,
 } = vi.hoisted(() => ({
@@ -25,6 +26,7 @@ const {
   listVehicles: vi.fn(),
   getVehicle: vi.fn(),
   listServiceParts: vi.fn(),
+  getRefrigerator: vi.fn(),
   uploadPicture: vi.fn(),
   deletePicture: vi.fn(),
 }))
@@ -37,7 +39,7 @@ vi.mock('../api/repairs', () => ({
   deleteWorkLog,
 }))
 vi.mock('../api/reference', () => ({ listCustomers, listVehicles, getVehicle }))
-vi.mock('../api/equipment', () => ({ listServiceParts }))
+vi.mock('../api/equipment', () => ({ listServiceParts, getRefrigerator }))
 vi.mock('../api/pictures', () => ({
   listPictures: vi.fn(),
   uploadPicture,
@@ -449,5 +451,45 @@ describe('RepairPage', () => {
     expect(updateWorkLog.mock.calls[0][2].end_time).toMatch(
       /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/,
     )
+  })
+
+  it('shows the locked refrigerator and freezes the vehicle', async () => {
+    getRepair.mockResolvedValue({
+      ...baseRepair,
+      gas_equipment_locked: true,
+      refrigerator: 7,
+      refrigerator_installed: true,
+    })
+    getRefrigerator.mockResolvedValue({
+      id: 7,
+      serial_nr: 'FR-7',
+      gas_kind: 'R32',
+      gas_kg: 3,
+    })
+    renderAt('/repairs/1')
+
+    expect(await screen.findByText(/FR-7/)).toBeTruthy()
+    const searchButtons = screen.getAllByRole('button', { name: 'Search' })
+    // The vehicle search (second) is disabled; the customer search is not.
+    expect((searchButtons[1] as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('warns when the locked refrigerator was replaced', async () => {
+    getRepair.mockResolvedValue({
+      ...baseRepair,
+      gas_equipment_locked: true,
+      refrigerator: 7,
+      refrigerator_installed: false,
+    })
+    getRefrigerator.mockResolvedValue({
+      id: 7,
+      serial_nr: 'FR-7',
+      gas_kg: 3,
+    })
+    renderAt('/repairs/1')
+
+    expect(
+      await screen.findByText(/replaced on its allestimento/),
+    ).toBeTruthy()
   })
 })

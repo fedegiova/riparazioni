@@ -13,7 +13,7 @@ from sqlalchemy import event
 
 from app import create_app
 from app.extensions import db
-from app.models import Customer, TransactionGuard, Vehicle
+from app.models import Customer, GasCylinder, Refrigerator, TransactionGuard, Vehicle
 
 
 @pytest.fixture()
@@ -135,6 +135,116 @@ def _archive(repair_id):
     return lambda client: client.put(
         f"/api/v1/repairs/{repair_id}", json={"end_data": "2026-01-01T18:00:00"}
     )
+
+
+def _seed_gas_equipment(app):
+    """Install a refrigerator on vehicle 1 and add a matching cylinder."""
+    with app.app_context():
+        cylinder = GasCylinder(
+            gas_kind="R32", full_weight=10.0, remaining_weight=10.0
+        )
+        refrigerator = Refrigerator(
+            serial_nr="FR",
+            brand="B",
+            model="M",
+            gas_kind="R32",
+            gas_kg=3.0,
+            allestimento_id=1,
+        )
+        db.session.add_all([cylinder, refrigerator])
+        db.session.commit()
+        ids = (cylinder.id, refrigerator.id)
+        db.session.remove()
+        return ids
+
+
+def _gas_fill(repair_id, cylinder_id, refrigerator_id):
+    return lambda client: client.post(
+        f"/api/v1/repairs/{repair_id}/work-log",
+        json={
+            "operator": "FABRI",
+            "gas_operation": "fill",
+            "gas_recharge": cylinder_id,
+            "gas_measured_kg": 2.0,
+            "expected_refrigerator": refrigerator_id,
+        },
+    )
+
+
+def test_concurrent_gas_fills_do_not_lose_a_stock_update(file_app):
+    with file_app.app_context():
+        cylinder_id, refrigerator_id = _seed_gas_equipment(file_app)
+    repair_id = _create_repair(file_app)
+
+    with file_app.app_context():
+        first, second = _run_together(
+            file_app,
+            _gas_fill(repair_id, cylinder_id, refrigerator_id),
+            _gas_fill(repair_id, cylinder_id, refrigerator_id),
+        )
+        assert first.status_code == 201, (first.status_code, first.get_json())
+        assert second.status_code == 201, (second.status_code, second.get_json())
+        # The guard serializes the two movements: 10.0 - 2.0 - 2.0.
+        assert db.session.get(GasCylinder, cylinder_id).remaining_weight == 6.0
+        db.session.remove()
+
+
+def test_replacement_cannot_misbind_a_gas_job(file_app):
+    with file_app.app_context():
+        first = Refrigerator(
+            serial_nr="A",
+            brand="B",
+            model="M",
+            gas_kind="R32",
+            gas_kg=3.0,
+            allestimento_id=1,
+        )
+        replacement = Refrigerator(
+            serial_nr="B", brand="B", model="M", gas_kind="R32", gas_kg=3.0
+        )
+        cylinder = GasCylinder(
+            gas_kind="R32", full_weight=10.0, remaining_weight=4.0
+        )
+        db.session.add_all([first, replacement, cylinder])
+        db.session.commit()
+        first_id, replacement_id, cylinder_id = first.id, replacement.id, cylinder.id
+        db.session.remove()
+    repair_id = _create_repair(file_app)
+
+    def gas(client):
+        return client.post(
+            f"/api/v1/repairs/{repair_id}/work-log",
+            json={
+                "operator": "FABRI",
+                "gas_operation": "recovery",
+                "gas_recharge": cylinder_id,
+                "gas_measured_kg": 1.0,
+                "expected_refrigerator": first_id,
+            },
+        )
+
+    def install(client):
+        return client.post(
+            f"/api/v1/refrigerators/{replacement_id}/install",
+            json={"allestimento_id": 1},
+        )
+
+    with file_app.app_context():
+        gas_response, install_response = _run_together(file_app, gas, install)
+        assert install_response.status_code == 200, install_response.get_json()
+        detail = file_app.test_client().get(
+            f"/api/v1/repairs/{repair_id}"
+        ).get_json()
+
+        if gas_response.status_code == 201:
+            # Gas work bound the unit that was installed at save time.
+            assert detail["refrigerator"] == first_id
+            assert detail["refrigerator_installed"] is False
+        else:
+            # The replacement landed first, so the stale selection was refused.
+            assert gas_response.status_code == 409
+            assert detail["refrigerator"] is None
+        db.session.remove()
 
 
 def test_concurrent_starts_leave_at_most_one_running_timer(file_app):

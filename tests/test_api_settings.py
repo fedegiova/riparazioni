@@ -9,41 +9,47 @@ def _put(client, name, value):
     return client.put(f"/api/v1/settings/{name}", json=value)
 
 
+# Defaults written by app/services/settings.py for known-but-unwritten settings.
+DEFAULT_OPERATORS = ["FABRI", "CLAUDIO", "PASQUALE", "MOHAMMED"]
+DEFAULT_GAS_TYPES = ["R32", "R410A"]
+DEFAULT_WORKING_HOURS = {
+    "mon": [["08:00", "12:00"], ["13:00", "16:30"]],
+    "tue": [["08:00", "12:00"], ["13:00", "16:30"]],
+    "wed": [["08:00", "12:00"], ["13:00", "16:30"]],
+    "thu": [["08:00", "12:00"], ["13:00", "16:30"]],
+    "fri": [["08:00", "12:00"], ["13:00", "16:30"]],
+    "sat": [["08:00", "12:00"]],
+    "sun": [],
+}
+
+
 # --- 2.2 reads ---------------------------------------------------------------
 
 
 class TestReads:
-    def test_list_includes_known_defaults_when_empty(self, client, db):
+    def test_list_includes_known_defaults_when_unwritten(self, client, db):
         response = client.get("/api/v1/settings")
         assert response.status_code == 200
         body = response.get_json()
-        assert body["operators"] == []
-        assert body["working_hours"] == {
-            "mon": [],
-            "tue": [],
-            "wed": [],
-            "thu": [],
-            "fri": [],
-            "sat": [],
-            "sun": [],
-        }
+        assert body["operators"] == DEFAULT_OPERATORS
+        assert body["working_hours"] == DEFAULT_WORKING_HOURS
         assert body["holidays"] == {}
-        assert body["gas_types"] == []
+        assert body["gas_types"] == DEFAULT_GAS_TYPES
 
     def test_read_known_setting_default(self, client, db):
         response = client.get("/api/v1/settings/operators")
         assert response.status_code == 200
-        assert response.get_json() == []
+        assert response.get_json() == DEFAULT_OPERATORS
 
     def test_read_unknown_setting_404(self, client, db):
         response = client.get("/api/v1/settings/nope")
         assert response.status_code == 404
         assert set(response.get_json()) == {"error"}
 
-    def test_unwritten_gas_types_reads_empty(self, client, db):
+    def test_unwritten_gas_types_reads_default(self, client, db):
         response = client.get("/api/v1/settings/gas_types")
         assert response.status_code == 200
-        assert response.get_json() == []
+        assert response.get_json() == DEFAULT_GAS_TYPES
 
 
 # --- 2.2 writes --------------------------------------------------------------
@@ -108,7 +114,7 @@ class TestValidation:
     def test_reject_invalid_operators(self, client, db):
         response = _put(client, "operators", ["ok", 3])
         assert response.status_code == 400
-        assert client.get("/api/v1/settings/operators").get_json() == []
+        assert client.get("/api/v1/settings/operators").get_json() == DEFAULT_OPERATORS
 
     def test_accept_valid_operators(self, client, db):
         assert _put(client, "operators", ["MARIO", "LUIGI"]).status_code == 200
@@ -116,7 +122,7 @@ class TestValidation:
     def test_reject_invalid_gas_types(self, client, db):
         response = _put(client, "gas_types", ["R410A", 42])
         assert response.status_code == 400
-        assert client.get("/api/v1/settings/gas_types").get_json() == []
+        assert client.get("/api/v1/settings/gas_types").get_json() == DEFAULT_GAS_TYPES
 
     def test_reject_unknown_weekday(self, client, db):
         response = _put(client, "working_hours", {"funday": []})
@@ -206,7 +212,7 @@ class TestDelete:
         _put(client, "operators", ["MARIO"])
         response = client.delete("/api/v1/settings/operators")
         assert response.status_code == 204
-        assert client.get("/api/v1/settings/operators").get_json() == []
+        assert client.get("/api/v1/settings/operators").get_json() == DEFAULT_OPERATORS
 
     def test_delete_unknown_404(self, client, db):
         response = client.delete("/api/v1/settings/nope")

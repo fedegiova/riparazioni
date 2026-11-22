@@ -17,16 +17,17 @@ never leaves partially mutated state behind. Functions do NOT commit — the
 route commits, keeping related writes in one transaction.
 """
 
+import math
 from io import BytesIO
 
 from openpyxl import Workbook
 
 from app.extensions import db
 from app.models import (
-    GAS_SYSTEM_STATES,
     Customer,
     GasCylinder,
     Picture,
+    Refrigerator,
     RepairPart,
     Repairs,
     RepairWorkLog,
@@ -132,96 +133,201 @@ def _validate_repair_payload(data: dict) -> None:
 
 # --- gas recharge validation / application --------------------------------------
 
+GAS_OPERATIONS = ("none", "fill", "recovery", "recovery_recharge")
+# Payload keys from the retired gas-state contract. Their presence is reported
+# as an unsupported payload rather than silently ignored.
+_LEGACY_GAS_KEYS = ("gas_system_state", "gas_recharge_weight", "gas_recovered_weight")
+
+
 def _parse_work_log_gas(data: dict) -> dict:
-    state = data.get("gas_system_state")
-    if state is not None and state == "":
-        state = None
+    operation = data.get("gas_operation")
+    if operation == "":
+        operation = None
+    if operation is None and any(key in data for key in _LEGACY_GAS_KEYS):
+        raise BadRequest(
+            "gas_system_state-based payloads are no longer supported; "
+            "use gas_operation"
+        )
     return {
-        "state": state,
+        "operation": operation,
         "cylinder": data.get("gas_recharge"),
-        "weight": data.get("gas_recharge_weight"),
-        "recovered": data.get("gas_recovered_weight"),
+        "measured": data.get("gas_measured_kg"),
+        "expected": data.get("expected_refrigerator"),
     }
 
 
-def _validate_gas(entry, state, cylinder_id, weight, recovered) -> None:
+def _is_finite_number(value) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
+def _require_measured(value, operation: str) -> float:
+    if not _is_finite_number(value):
+        raise BadRequest(f"{operation} requires a finite gas_measured_kg in kg")
+    return float(value)
+
+
+def _validate_gas_type(refrigerator, cylinder) -> None:
+    if not refrigerator.gas_kind or not cylinder.gas_kind:
+        raise BadRequest(
+            "both the refrigerator and the cylinder must have a gas type"
+        )
+    if refrigerator.gas_kind != cylinder.gas_kind:
+        raise BadRequest(
+            f"gas type mismatch: refrigerator {refrigerator.gas_kind} vs "
+            f"cylinder {cylinder.gas_kind}"
+        )
+
+
+def _resolve_gas_refrigerator(repair: Repairs, expected):
+    """The refrigerator a gas movement belongs to, or a blocking error.
+
+    Until the repair is locked, the unit installed on its allestimento is the
+    one used and then frozen. Once locked, only that recorded unit counts, and
+    it must still be installed on this allestimento.
+    """
+    if repair.vehicle is None:
+        raise BadRequest(
+            "gas operations require the repair to have an allestimento"
+        )
+
+    if repair.gas_equipment_locked:
+        refrigerator = (
+            db.session.get(Refrigerator, repair.refrigerator)
+            if repair.refrigerator is not None
+            else None
+        )
+        if refrigerator is None or refrigerator.allestimento_id != repair.vehicle:
+            raise Conflict(
+                "the repair's refrigerator is no longer installed on its "
+                "allestimento; record gas work for the replacement on a "
+                "separate repair"
+            )
+    else:
+        refrigerator = db.session.execute(
+            db.select(Refrigerator).where(
+                Refrigerator.allestimento_id == repair.vehicle
+            )
+        ).scalars().first()
+        if refrigerator is None:
+            raise BadRequest(
+                f"no refrigerator is installed on allestimento {repair.vehicle}; "
+                "add one in Anagrafica"
+            )
+
+    if expected is not None and expected != refrigerator.id:
+        raise Conflict(
+            "the installed refrigerator changed since the form was loaded; "
+            "reload and retry"
+        )
+    return refrigerator
+
+
+def _stored_delta(entry: RepairWorkLog) -> float:
+    """The cylinder balance change this entry applied, in kg.
+
+    Negative for fill and the net part of a combined operation (gas leaves the
+    cylinder), positive for a recovery. Zero for ordinary work.
+    """
+    measured = entry.gas_measured_kg or 0.0
+    if entry.gas_operation == "fill":
+        return -measured
+    if entry.gas_operation == "recovery":
+        return measured
+    if entry.gas_operation == "recovery_recharge":
+        return -measured
+    return 0.0
+
+
+def _validate_gas(entry, repair: Repairs, gas: dict):
     """Read-only validation of a gas dataset.
 
-    *entry* is the existing entry being updated, or None for a new entry.
+    Returns ``(movement, refrigerator)`` where ``movement`` is the normalized
+    change to apply (or ``None`` for ordinary work), or raises. Never mutates
+    the session, so a rejected request changes no stock, lock, or timer.
 
     Field matrix::
 
-        state               cylinder   recharge        recovered
-        VUOTO               required   required (>0)    forbidden
-        PIENO               forbidden  forbidden       forbidden
-        RECUPERO            required   forbidden       required (>=0)
-        RICUPERO_RICARICA   required   required (>0)    required (>=0)
+        operation           cylinder   measured (kg)        meaning
+        none                forbidden  forbidden            ordinary work
+        fill                required   required (>0, <=C)    gas added
+        recovery            required   required (>=0)        gas recovered
+        recovery_recharge   required   required (0..C)       net gas added
     """
+    operation = gas["operation"]
+    cylinder_id = gas["cylinder"]
+    measured = gas["measured"]
+    expected = gas["expected"]
     has_cylinder = cylinder_id is not None
-    has_weight = weight is not None
-    has_recovered = recovered is not None
+    has_measured = measured is not None
 
-    if state is not None and state not in GAS_SYSTEM_STATES:
-        raise BadRequest(f"gas_system_state must be one of {', '.join(GAS_SYSTEM_STATES)}")
+    if operation is None:
+        if has_cylinder or has_measured:
+            raise BadRequest("an entry carrying gas data requires a gas_operation")
+        return None, None
 
-    # Any entry carrying gas data must declare the system state.
-    if state is None:
-        if has_cylinder or has_weight or has_recovered:
-            raise BadRequest("an entry carrying gas data requires a gas_system_state")
-        return
+    if operation not in GAS_OPERATIONS:
+        raise BadRequest(
+            f"gas_operation must be one of {', '.join(GAS_OPERATIONS)}"
+        )
 
-    # A full system stores no gas data at all.
-    if state == "PIENO":
-        if has_cylinder or has_weight or has_recovered:
-            raise BadRequest("PIENO entries must not carry cylinder or weight data")
-        return
-
-    # Every other state moves gas through a cylinder.
-    if not has_cylinder:
-        raise BadRequest(f"{state} entries require a gas_recharge cylinder")
-
-    if state in ("VUOTO", "RICUPERO_RICARICA"):
-        if not has_weight:
+    if operation == "none":
+        if has_cylinder or has_measured:
             raise BadRequest(
-                f"{state} entries require a positive gas_recharge_weight"
+                "none entries must not carry cylinder or weight data"
             )
-        if not isinstance(weight, (int, float)) or isinstance(weight, bool) or weight <= 0:
-            raise BadRequest("gas_recharge_weight must be a positive number")
-    elif has_weight:  # RECUPERO
-        raise BadRequest("RECUPERO entries must not carry a gas_recharge_weight")
+        return None, None
 
-    if state in ("RECUPERO", "RICUPERO_RICARICA"):
-        if not has_recovered:
-            raise BadRequest(f"{state} entries require a gas_recovered_weight")
-        if (
-            not isinstance(recovered, (int, float))
-            or isinstance(recovered, bool)
-            or recovered < 0
-        ):
-            raise BadRequest("gas_recovered_weight must be a non-negative number")
-    elif has_recovered:  # VUOTO
-        raise BadRequest("VUOTO entries must not carry a gas_recovered_weight")
+    refrigerator = _resolve_gas_refrigerator(repair, expected)
 
+    if not has_cylinder:
+        raise BadRequest(f"{operation} requires a gas_recharge cylinder")
     cylinder = db.session.get(GasCylinder, cylinder_id)
     if cylinder is None:
         raise Conflict(f"cylinder {cylinder_id} does not exist")
+    _validate_gas_type(refrigerator, cylinder)
 
-    # An update of an entry that already moved gas through this cylinder must
-    # reverse the old movement before checking the new one.
+    nameplate = refrigerator.gas_kg
+    if operation == "fill":
+        amount = _require_measured(measured, "fill")
+        if amount <= 0:
+            raise BadRequest("fill requires a positive gas_measured_kg")
+        if amount > nameplate:
+            raise BadRequest(
+                "the fill amount exceeds the refrigerator nameplate capacity"
+            )
+        delta, recharged, recovered, stored_nameplate = -amount, amount, 0.0, None
+    elif operation == "recovery":
+        amount = _require_measured(measured, "recovery")
+        if amount < 0:
+            raise BadRequest("recovery requires a non-negative gas_measured_kg")
+        delta, recharged, recovered, stored_nameplate = amount, 0.0, amount, None
+    else:  # recovery_recharge
+        amount = _require_measured(measured, "recovery_recharge")
+        if amount < 0 or amount > nameplate:
+            raise BadRequest(
+                "the combined net added gas must be between 0 and the "
+                "nameplate capacity"
+            )
+        delta = -amount
+        recharged = nameplate
+        recovered = nameplate - amount
+        stored_nameplate = nameplate
+
+    # A movement must keep the cylinder within [0, full weight]. When this
+    # entry already moved gas through the same cylinder, validate against the
+    # balance as if that movement had been undone.
     effective = cylinder.remaining_weight or 0.0
-    if (
-        entry is not None
-        and entry.id is not None
-        and entry.gas_recharge == cylinder.id
-    ):
-        effective += (entry.gas_recharge_weight or 0.0) - (
-            entry.gas_recovered_weight or 0.0
-        )
-
-    result = effective + (recovered or 0.0) - (weight or 0.0)
+    if entry is not None and entry.id is not None and entry.gas_recharge == cylinder.id:
+        effective -= _stored_delta(entry)
+    result = effective + delta
     if result < 0:
         raise BadRequest(
-            f"cannot recharge {weight} from cylinder {cylinder_id}: only {effective} available"
+            f"cannot recharge {delta * -1} from cylinder {cylinder_id}: "
+            f"only {effective} available"
         )
     if result > cylinder.full_weight:
         raise BadRequest(
@@ -229,37 +335,64 @@ def _validate_gas(entry, state, cylinder_id, weight, recovered) -> None:
             f"full weight {cylinder.full_weight}"
         )
 
+    movement = {
+        "operation": operation,
+        "cylinder": cylinder.id,
+        "measured": float(measured),
+        "nameplate": stored_nameplate,
+        "delta": delta,
+        "recharged": recharged,
+        "recovered": recovered,
+        "refrigerator": refrigerator.id,
+    }
+    return movement, refrigerator
 
-def _apply_gas(entry: RepairWorkLog, state, cylinder_id, weight, recovered) -> None:
-    """Apply an already-validated gas dataset (mutation only).
 
-    A recovered weight adds to the cylinder balance and a recharged weight
-    subtracts from it; the two are stored independently.
+def _apply_gas(
+    entry: RepairWorkLog, movement, refrigerator, repair: Repairs
+) -> None:
+    """Apply an already-validated gas movement (mutation only).
+
+    Reverses the entry's previous movement first, then stores the new one and
+    updates the cylinder balance and the repair's equipment lock.
     """
     _reverse_gas(entry)
-    entry.gas_system_state = state
-    entry.gas_recharge = cylinder_id
-    entry.gas_recharge_weight = weight if cylinder_id is not None else None
-    entry.gas_recovered_weight = recovered
-    if cylinder_id is not None:
-        cylinder = db.session.get(GasCylinder, cylinder_id)
-        cylinder.remaining_weight = (
-            (cylinder.remaining_weight or 0.0)
-            + (recovered or 0.0)
-            - (weight or 0.0)
-        )
+    entry.gas_operation = movement["operation"]
+    entry.gas_recharge = movement["cylinder"]
+    entry.gas_measured_kg = movement["measured"]
+    entry.gas_nameplate_kg = movement["nameplate"]
+    # Clear any retired-contract values a legacy row may still carry.
+    entry.gas_system_state = None
+    entry.gas_recharge_weight = None
+    entry.gas_recovered_weight = None
+
+    cylinder = db.session.get(GasCylinder, movement["cylinder"])
+    cylinder.remaining_weight = (cylinder.remaining_weight or 0.0) + movement["delta"]
+
+    repair.refrigerator = refrigerator.id
+    repair.gas_equipment_locked = True
+
+
+def _clear_gas(entry: RepairWorkLog) -> None:
+    """Reverse the entry's movement and return it to ordinary work."""
+    _reverse_gas(entry)
+    entry.gas_operation = None
+    entry.gas_recharge = None
+    entry.gas_measured_kg = None
+    entry.gas_nameplate_kg = None
+    entry.gas_system_state = None
+    entry.gas_recharge_weight = None
+    entry.gas_recovered_weight = None
 
 
 def _reverse_gas(entry: RepairWorkLog) -> None:
-    """Undo the entry's gas movement when it is updated or removed."""
+    """Undo the entry's gas movement when it is updated, cleared, or removed."""
     if entry.gas_recharge is None:
         return
     cylinder = db.session.get(GasCylinder, entry.gas_recharge)
     if cylinder is not None:
         cylinder.remaining_weight = (
-            (cylinder.remaining_weight or 0.0)
-            + (entry.gas_recharge_weight or 0.0)
-            - (entry.gas_recovered_weight or 0.0)
+            (cylinder.remaining_weight or 0.0) - _stored_delta(entry)
         )
 
 
@@ -389,7 +522,7 @@ def _decorate_repairs(repairs: list[Repairs]) -> None:
                 entry.start_time, entry.end_time, calendar
             )
             gas[entry.id_repairs] = gas.get(entry.id_repairs, 0.0) + (
-                entry.gas_recharge_weight or 0.0
+                entry.recharged_kg() or 0.0
             )
         owned = db.session.execute(
             db.select(Picture)
@@ -399,6 +532,19 @@ def _decorate_repairs(repairs: list[Repairs]) -> None:
         for picture in owned:
             pictures.setdefault(picture.owner_id, []).append(picture)
     names = _resolve_customer_names({repair.customer for repair in repairs})
+    # Whether each repair's recorded refrigerator is still installed on its
+    # allestimento (None when no unit is recorded), in one lookup.
+    refrigerator_ids = {
+        repair.refrigerator for repair in repairs if repair.refrigerator is not None
+    }
+    refrigerator_allestimento: dict[int, int | None] = {}
+    if refrigerator_ids:
+        rows = db.session.execute(
+            db.select(Refrigerator.id, Refrigerator.allestimento_id).where(
+                Refrigerator.id.in_(refrigerator_ids)
+            )
+        ).all()
+        refrigerator_allestimento = {row[0]: row[1] for row in rows}
     for repair in repairs:
         if repair.end_data is not None and repair.archived_total_hours is not None:
             repair.total_hours = repair.archived_total_hours
@@ -407,6 +553,12 @@ def _decorate_repairs(repairs: list[Repairs]) -> None:
         repair.gas_used = gas.get(repair.id, 0.0)
         repair.customer_name = names.get(repair.customer)
         repair.pictures = pictures.get(repair.id, [])
+        if repair.refrigerator is None:
+            repair.refrigerator_installed = None
+        else:
+            repair.refrigerator_installed = (
+                refrigerator_allestimento.get(repair.refrigerator) == repair.vehicle
+            )
 
 
 # --- repair CRUD ------------------------------------------------------------------
@@ -488,6 +640,19 @@ def update_repair(repair: Repairs, data: dict) -> Repairs:
 
     acquire()
     db.session.refresh(repair)
+
+    # Once gas work locked the equipment, the vehicle and refrigerator are
+    # frozen so a later replacement cannot silently re-point the repair.
+    if repair.gas_equipment_locked:
+        if "vehicle" in data and data["vehicle"] != repair.vehicle:
+            raise Conflict(
+                "the repair's equipment is locked by gas work; its vehicle "
+                "cannot change"
+            )
+        if "refrigerator" in data and data["refrigerator"] != repair.refrigerator:
+            raise Conflict(
+                "the repair's refrigerator is locked by gas work; it cannot change"
+            )
 
     was_archived = repair.end_data is not None
     if "end_data" in data:
@@ -581,10 +746,10 @@ def _gas_fields_present(data: dict) -> bool:
     return any(
         key in data
         for key in (
-            "gas_system_state",
+            "gas_operation",
             "gas_recharge",
-            "gas_recharge_weight",
-            "gas_recovered_weight",
+            "gas_measured_kg",
+            *_LEGACY_GAS_KEYS,
         )
     )
 
@@ -596,20 +761,19 @@ def add_work_log_entry(repair: Repairs, data: dict) -> RepairWorkLog:
     _validate_new_operator(data.get("operator"))
     _validate_description(data.get("description"))
 
+    # Validate the whole gas dataset (read-only) before any timer handoff or
+    # equipment lock, so a rejected request changes nothing.
     gas = _parse_work_log_gas(data)
-    _validate_gas(None, gas["state"], gas["cylinder"], gas["weight"], gas["recovered"])
+    movement, refrigerator = _validate_gas(None, repair, gas)
 
     entry = RepairWorkLog(id_repairs=repair.id)
     _apply_non_gas_fields(entry, data)
     if entry.start_time is not None and entry.end_time is None:
         _handoff_operator_timer(entry.operator, entry.start_time)
-    _apply_gas(
-        entry,
-        gas["state"],
-        gas["cylinder"],
-        gas["weight"],
-        gas["recovered"],
-    )
+    if movement is not None:
+        _apply_gas(entry, movement, refrigerator, repair)
+    else:
+        _clear_gas(entry)
     db.session.add(entry)
     return entry
 
@@ -632,14 +796,19 @@ def update_work_log_entry(entry: RepairWorkLog, data: dict) -> RepairWorkLog:
     if "description" in data:
         _validate_description(data["description"])
 
-    gas = _parse_work_log_gas(data) if _gas_fields_present(data) else None
-    if gas is not None:
+    gas_present = _gas_fields_present(data)
+    movement = refrigerator = None
+    if gas_present:
         # Read-only validation first, against the entry's current values.
-        _validate_gas(entry, gas["state"], gas["cylinder"], gas["weight"], gas["recovered"])
+        gas = _parse_work_log_gas(data)
+        movement, refrigerator = _validate_gas(entry, repair, gas)
 
     _apply_non_gas_fields(entry, data)
-    if gas is not None:
-        _apply_gas(entry, gas["state"], gas["cylinder"], gas["weight"], gas["recovered"])
+    if gas_present:
+        if movement is not None:
+            _apply_gas(entry, movement, refrigerator, repair)
+        else:
+            _clear_gas(entry)
     return entry
 
 

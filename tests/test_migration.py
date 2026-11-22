@@ -70,6 +70,38 @@ def test_migration_upgrade_and_downgrade(tmp_path):
         }
         assert "description" in work_log_columns, work_log_columns
 
+        # Schema delta: the new work-log gas-operation columns.
+        assert {"gas_operation", "gas_measured_kg", "gas_nameplate_kg"} <= (
+            work_log_columns
+        ), work_log_columns
+
+        # Refrigerator installation link, gas type, and the per-allestimento
+        # uniqueness of installed units.
+        refrigerator_columns = {
+            column["name"]: column
+            for column in inspector.get_columns("REFRIGERATORS")
+        }
+        assert {"allestimento_id", "gas_kind"} <= set(refrigerator_columns), (
+            refrigerator_columns
+        )
+        assert refrigerator_columns["allestimento_id"]["nullable"] is True
+        allestimento_indexes = {
+            index["name"]: index
+            for index in inspector.get_indexes("REFRIGERATORS")
+        }
+        assert "uq_refrigerators_allestimento" in allestimento_indexes, (
+            allestimento_indexes
+        )
+        assert bool(allestimento_indexes["uq_refrigerators_allestimento"]["unique"])
+
+        # Repair gas-equipment lock, defaulting to false and not nullable.
+        repair_columns = {
+            column["name"]: column
+            for column in inspector.get_columns("REPAIRS")
+        }
+        assert "gas_equipment_locked" in repair_columns, repair_columns
+        assert repair_columns["gas_equipment_locked"]["nullable"] is False
+
         guard_rows = db.session.execute(
             sa.text("SELECT id, version FROM TRANSACTION_GUARDS")
         ).all()
@@ -204,3 +236,57 @@ def test_archived_totals_are_backfilled_with_the_old_elapsed_sum(tmp_path):
             sa.text("SELECT description FROM REPAIR_WORK_LOG")
         ).scalars().all()
         assert descriptions == [None, None, None, None]
+
+
+def test_upgrade_does_not_require_obsolete_gas_columns(tmp_path):
+    """The new migration must succeed even where the old gas columns are gone.
+
+    The deployed schema is not guaranteed to carry the pre-change state/weight
+    columns, so the upgrade only adds new columns and never touches them.
+    """
+    db_path = tmp_path / "obsolete.sqlite"
+    app = _create_test_app(tmp_path)
+    app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{db_path}"
+    app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {}
+
+    with app.app_context():
+        from app.extensions import db
+
+        cfg = Config(str(PROJECT_ROOT / "migrations" / "alembic.ini"))
+        cfg.set_main_option("script_location", str(PROJECT_ROOT / "migrations"))
+        command.upgrade(cfg, "b2c4d6e8f0a1")
+
+        with db.engine.begin() as conn:
+            for column in (
+                "gas_system_state",
+                "gas_recharge_weight",
+                "gas_recovered_weight",
+            ):
+                conn.execute(sa.text(f"ALTER TABLE REPAIR_WORK_LOG DROP COLUMN {column}"))
+
+        # Must not fail on the missing legacy columns.
+        command.upgrade(cfg, "head")
+
+        columns = {
+            column["name"]
+            for column in sa.inspect(db.engine).get_columns("REPAIR_WORK_LOG")
+        }
+        assert {"gas_operation", "gas_measured_kg", "gas_nameplate_kg"} <= columns
+        assert "gas_system_state" not in columns
+
+
+def test_allestimento_index_compiles_for_sql_server():
+    """The installation uniqueness renders as a filtered index on MSSQL."""
+    from sqlalchemy.dialects import mssql
+    from sqlalchemy.schema import CreateIndex
+
+    from app.models import Refrigerator
+
+    index = next(
+        index
+        for index in Refrigerator.__table__.indexes
+        if index.name == "uq_refrigerators_allestimento"
+    )
+    ddl = str(CreateIndex(index).compile(dialect=mssql.dialect()))
+    assert "UNIQUE" in ddl.upper()
+    assert "WHERE allestimento_id IS NOT NULL" in ddl

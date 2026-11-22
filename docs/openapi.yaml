@@ -121,7 +121,17 @@ paths:
   /api/v1/refrigerators:
     get:
       summary: List refrigerators
+      description: |
+        All refrigerator records. Filter by `allestimento_id` to find the unit
+        currently installed on a vehicle.
       tags: [equipment]
+      parameters:
+        - name: allestimento_id
+          in: query
+          required: false
+          description: Only refrigerators installed on this allestimento
+          schema:
+            type: integer
       responses:
         "200":
           description: List of refrigerators
@@ -191,6 +201,41 @@ paths:
       responses:
         "204":
           description: Deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/refrigerators/{refrigerator_id}/install:
+    parameters:
+      - $ref: "#/components/parameters/RefrigeratorIdParam"
+    post:
+      summary: Install a refrigerator on an allestimento
+      description: |
+        Explicit replacement: detaches any unit currently installed on the
+        target allestimento and links this record instead, atomically. The
+        record must carry complete nameplate data (serial number, manufacturer,
+        model, positive `gas_kg`, and a configured `gas_kind`).
+      tags: [equipment]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [allestimento_id]
+              properties:
+                allestimento_id:
+                  type: integer
+                  description: TBALLESTIMENTI.ID_INT to install the unit on
+      responses:
+        "200":
+          description: Installed refrigerator
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Refrigerator"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -793,15 +838,24 @@ paths:
 
         Gas recharge rules:
 
-        - a recharge needs both `gas_recharge` (cylinder id) and `gas_recharge_weight`;
-          one without the other is rejected (400);
-        - any entry carrying gas data needs a `gas_system_state`;
-        - `PIENO` entries must not carry cylinder or weight data;
-        - the cylinder's `remaining_weight` is decreased by the recharged weight in the
-          same transaction;
-        - recharging more than the cylinder's remaining weight is rejected (400) and
-          leaves the balance unchanged;
-        - an unknown cylinder id is rejected (409).
+        - `gas_operation` selects the work: `none`, `fill`, `recovery`, or
+          `recovery_recharge`; any other value (or gas data without an
+          operation) is rejected (400);
+        - a fill or combined operation needs `gas_recharge` (cylinder id) and a
+          finite `gas_measured_kg`;
+        - `fill` needs a positive amount at or below the refrigerator's
+          nameplate capacity (`gas_kg`);
+        - `recovery` needs a non-negative recovered amount;
+        - `recovery_recharge` needs a net added amount between 0 and the
+          nameplate capacity; the recharged weight is the nameplate and the
+          recovered weight is calculated as nameplate minus the net addition;
+        - the refrigerator installed on the repair's allestimento must have the
+          same gas type as the cylinder, and is locked to the repair by the
+          first gas operation;
+        - the movement is applied to the cylinder's `remaining_weight` in the
+          same transaction and rejected (400) when it would leave the balance
+          below zero or above the cylinder's full weight;
+        - an unknown cylinder id or a missing installation is rejected (400 or 409).
       tags: [work-log]
       parameters:
         - $ref: "#/components/parameters/RepairIdParam"
@@ -1159,6 +1213,15 @@ components:
         notes:
           type: string
           maxLength: 4000
+        allestimento_id:
+          type: integer
+          nullable: true
+          description: TBALLESTIMENTI.ID_INT the unit is installed on; null when uninstalled
+        gas_kind:
+          type: string
+          maxLength: 32
+          nullable: true
+          description: Gas type, drawn from the configured gas_types setting
     RefrigeratorInput:
       type: object
       properties:
@@ -1172,6 +1235,13 @@ components:
           type: number
         notes:
           type: string
+        allestimento_id:
+          type: integer
+          nullable: true
+          description: Install on this allestimento (409 when one is already installed)
+        gas_kind:
+          type: string
+          nullable: true
     GasCylinder:
       type: object
       required: [id, full_weight]
@@ -1277,16 +1347,26 @@ components:
           type: string
           nullable: true
           description: Operator that recorded the movement (movement entries only)
-        gas_system_state:
+        gas_operation:
           type: string
+          enum: [fill, recovery, recovery_recharge]
           nullable: true
-          description: Gas system state of the movement (movement entries only)
+          description: Gas operation of the movement (movement entries only)
         recharged_weight:
           type: number
           nullable: true
         recovered_weight:
           type: number
           nullable: true
+          description: Recovered gas; calculated (nameplate minus net added) for a combined operation
+        net_added_weight:
+          type: number
+          nullable: true
+          description: Measured net added gas for a combined operation (movement entries only)
+        recovered_calculated:
+          type: boolean
+          nullable: true
+          description: True when the recovered weight is calculated, not measured
         remaining_weight:
           type: number
           nullable: true
@@ -1406,6 +1486,11 @@ components:
         refrigerator:
           type: integer
           nullable: true
+        gas_equipment_locked:
+          type: boolean
+          description: |
+            Set when the repair's first gas operation froze its vehicle and
+            refrigerator. While set, those fields cannot be changed.
         start_data:
           type: string
           format: date-time
@@ -1438,6 +1523,12 @@ components:
         - $ref: "#/components/schemas/Repair"
         - type: object
           properties:
+            refrigerator_installed:
+              type: boolean
+              nullable: true
+              description: |
+                Whether the repair's recorded refrigerator is still installed on
+                its allestimento; null when no refrigerator is recorded.
             work_log:
               type: array
               items:
@@ -1537,23 +1628,34 @@ components:
           maxLength: 4000
           nullable: true
           description: Free-text note about the work performed
-        gas_system_state:
+        gas_operation:
           type: string
-          enum: [VUOTO, PIENO, RECUPERO, RICUPERO_RICARICA]
+          enum: [none, fill, recovery, recovery_recharge]
           nullable: true
-          description: Gas system state of the operation
+          description: Gas operation; null for ordinary work
         gas_recharge:
           type: integer
           nullable: true
-          description: Cylinder id used for the recharge
-        gas_recharge_weight:
+          description: Cylinder id used for the movement
+        gas_measured_kg:
           type: number
           nullable: true
-          description: Kg of gas recharged
-        gas_recovered_weight:
+          description: |
+            The single measured mass in kg: the added amount (fill), the
+            recovered amount (recovery), or the net added amount
+            (recovery_recharge)
+        gas_nameplate_kg:
           type: number
           nullable: true
-          description: Kg of gas recovered; adds to the cylinder balance
+          description: Nameplate capacity used for a combined operation
+        recharged_weight:
+          type: number
+          nullable: true
+          description: Gross gas recharged, in kg (the nameplate for a combined operation)
+        recovered_weight:
+          type: number
+          nullable: true
+          description: Gas recovered, in kg (calculated for a combined operation)
     WorkLogCreate:
       type: object
       required: [operator]
@@ -1577,27 +1679,35 @@ components:
           type: string
           maxLength: 4000
           nullable: true
-        gas_system_state:
+        gas_operation:
           type: string
-          enum: [VUOTO, PIENO, RECUPERO, RICUPERO_RICARICA]
+          enum: [none, fill, recovery, recovery_recharge]
           nullable: true
+          description: Gas operation; omit for ordinary work
         gas_recharge:
           type: integer
           nullable: true
-        gas_recharge_weight:
+          description: Cylinder id
+        gas_measured_kg:
           type: number
           nullable: true
-        gas_recovered_weight:
-          type: number
+          description: The measured amount in kg for fill, recovery, or recovery_recharge
+        expected_refrigerator:
+          type: integer
           nullable: true
+          description: |
+            The refrigerator id the client displayed. If the installed unit has
+            changed, the write is rejected (409) rather than bound to the
+            replacement.
     WorkLogInput:
       type: object
       description: |
-        Partial update of a work log. Every field is optional; non-gas fields are
-        patched individually. If any gas field is present the whole gas dataset
-        (state, cylinder, weights) is replaced. An omitted operator keeps the
-        stored one; a changed operator must be configured. Archived repairs are
-        read-only (409) until reopened.
+        Partial update of a work log. Every field is optional; non-gas fields
+        are patched individually. Omitting every gas field leaves the stored
+        movement unchanged; a present `gas_operation` replaces the whole gas
+        dataset (and `none` clears and reverses it). An omitted operator keeps
+        the stored one; a changed operator must be configured. Archived repairs
+        are read-only (409) until reopened.
       properties:
         start_time:
           type: string
@@ -1612,18 +1722,18 @@ components:
           type: string
           maxLength: 4000
           nullable: true
-        gas_system_state:
+        gas_operation:
           type: string
-          enum: [VUOTO, PIENO, RECUPERO, RICUPERO_RICARICA]
+          enum: [none, fill, recovery, recovery_recharge]
           nullable: true
         gas_recharge:
           type: integer
           nullable: true
-        gas_recharge_weight:
+        gas_measured_kg:
           type: number
           nullable: true
-        gas_recovered_weight:
-          type: number
+        expected_refrigerator:
+          type: integer
           nullable: true
 
     # --- settings -------------------------------------------------------------

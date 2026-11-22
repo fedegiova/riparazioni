@@ -6,15 +6,18 @@ API IntegrityError handler renders it as a conflict (same behavior on
 SQLite tests and on MSSQL in production).
 """
 
+import math
 from datetime import UTC, datetime
 from datetime import date as date_cls, datetime, time
 
 from flask import jsonify, request
 
 from app.extensions import db
-from app.models import GasCylinder, Refill, Refrigerator, RepairWorkLog, ServicePart
+from app.models import GasCylinder, Refill, Refrigerator, RepairWorkLog, ServicePart, Vehicle
 from app.routes.api import bp
-from app.services.errors import BadRequest, NotFound
+from app.services import guard
+from app.services.errors import BadRequest, Conflict, NotFound
+from app.services.settings import get_setting
 
 
 def _json_body() -> dict:
@@ -33,16 +36,93 @@ def _get_or_404(model, item_id: int):
 
 # --- Refrigerators -----------------------------------------------------------
 
-REFRIGERATOR_FIELDS = ("serial_nr", "model", "brand", "gas_kg", "notes")
+REFRIGERATOR_FIELDS = (
+    "serial_nr",
+    "model",
+    "brand",
+    "gas_kg",
+    "notes",
+    "allestimento_id",
+    "gas_kind",
+)
+
+
+def _configured_gas_types() -> list:
+    """Gas types from settings (an unwritten setting uses its default)."""
+    value = get_setting("gas_types")
+    return value if isinstance(value, list) else []
+
+
+def _require_non_empty_string(value, name: str) -> None:
+    if not isinstance(value, str) or not value.strip():
+        raise BadRequest(f"{name} is required for an installed refrigerator")
+
+
+def _validate_allestimento_reference(allestimento_id) -> None:
+    """The target allestimento must exist in the legacy vehicles table."""
+    if not isinstance(allestimento_id, int) or isinstance(allestimento_id, bool):
+        raise BadRequest("allestimento_id must be an integer")
+    if db.session.get(Vehicle, allestimento_id) is None:
+        raise Conflict(f"allestimento {allestimento_id} does not exist")
+
+
+def _validate_nameplate(item: Refrigerator) -> None:
+    """Validate the fields required when a unit is installed."""
+    _require_non_empty_string(item.serial_nr, "serial_nr")
+    _require_non_empty_string(item.brand, "brand")
+    _require_non_empty_string(item.model, "model")
+    capacity = item.gas_kg
+    if (
+        not isinstance(capacity, (int, float))
+        or isinstance(capacity, bool)
+        or not math.isfinite(capacity)
+        or capacity <= 0
+    ):
+        raise BadRequest("gas_kg must be a positive finite number for an installed refrigerator")
+    gas_types = _configured_gas_types()
+    if not isinstance(item.gas_kind, str) or item.gas_kind not in gas_types:
+        raise BadRequest(
+            "gas_kind must be one of the configured gas types: "
+            + ", ".join(gas_types)
+        )
+
+
+def _validate_installation(item: Refrigerator) -> None:
+    """Validate the nameplate fields required when a unit is installed."""
+    if item.allestimento_id is None:
+        return
+    _validate_allestimento_reference(item.allestimento_id)
+    _validate_nameplate(item)
+
+
+def _ensure_allestimento_free(allestimento_id, exclude_id) -> None:
+    """One current installation per allestimento; replacement is explicit."""
+    if allestimento_id is None:
+        return
+    occupant = db.session.execute(
+        db.select(Refrigerator).where(
+            Refrigerator.allestimento_id == allestimento_id,
+            Refrigerator.id != exclude_id,
+        )
+    ).scalars().first()
+    if occupant is not None:
+        raise Conflict(
+            f"allestimento {allestimento_id} already has an installed "
+            "refrigerator; replace it explicitly"
+        )
 
 
 @bp.get("/refrigerators")
 def list_refrigerators():
-    items = (
-        db.session.execute(db.select(Refrigerator).order_by(Refrigerator.id))
-        .scalars()
-        .all()
-    )
+    query = db.select(Refrigerator).order_by(Refrigerator.id)
+    raw_allestimento = request.args.get("allestimento_id")
+    if raw_allestimento not in (None, ""):
+        try:
+            allestimento_id = int(raw_allestimento)
+        except (TypeError, ValueError):
+            raise BadRequest("allestimento_id must be an integer") from None
+        query = query.where(Refrigerator.allestimento_id == allestimento_id)
+    items = db.session.execute(query).scalars().all()
     return jsonify([item.to_dict() for item in items])
 
 
@@ -50,6 +130,10 @@ def list_refrigerators():
 def create_refrigerator():
     data = _json_body()
     item = Refrigerator(**{k: data.get(k) for k in REFRIGERATOR_FIELDS})
+    if item.allestimento_id is not None:
+        guard.acquire()
+    _validate_installation(item)
+    _ensure_allestimento_free(item.allestimento_id, exclude_id=None)
     db.session.add(item)
     db.session.commit()
     return jsonify(item.to_dict()), 201
@@ -64,9 +148,45 @@ def get_refrigerator(item_id):
 def update_refrigerator(item_id):
     item = _get_or_404(Refrigerator, item_id)
     data = _json_body()
+    if "allestimento_id" in data:
+        guard.acquire()
     for key in REFRIGERATOR_FIELDS:
         if key in data:
             setattr(item, key, data[key])
+    _validate_installation(item)
+    _ensure_allestimento_free(item.allestimento_id, exclude_id=item.id)
+    db.session.commit()
+    return jsonify(item.to_dict())
+
+
+@bp.post("/refrigerators/<int:item_id>/install")
+def install_refrigerator(item_id):
+    """Install this unit on an allestimento, replacing any current occupant.
+
+    The explicit replacement action: it detaches whatever unit is currently
+    installed and links this (already complete) record atomically, so a repair
+    that references the old unit keeps it.
+    """
+    item = _get_or_404(Refrigerator, item_id)
+    data = _json_body()
+    allestimento_id = data.get("allestimento_id")
+    guard.acquire()
+    _validate_allestimento_reference(allestimento_id)
+    _validate_nameplate(item)
+
+    # Detach the current occupant first and flush, so the filtered unique index
+    # never sees two rows pointing at the same allestimento at once.
+    current = db.session.execute(
+        db.select(Refrigerator).where(
+            Refrigerator.allestimento_id == allestimento_id,
+            Refrigerator.id != item.id,
+        )
+    ).scalars().first()
+    if current is not None:
+        current.allestimento_id = None
+        db.session.flush()
+
+    item.allestimento_id = allestimento_id
     db.session.commit()
     return jsonify(item.to_dict())
 
@@ -74,6 +194,11 @@ def update_refrigerator(item_id):
 @bp.delete("/refrigerators/<int:item_id>")
 def delete_refrigerator(item_id):
     item = _get_or_404(Refrigerator, item_id)
+    if item.allestimento_id is not None:
+        raise Conflict(
+            "an installed refrigerator cannot be deleted; replace or uninstall "
+            "it first"
+        )
     db.session.delete(item)
     db.session.commit()
     return "", 204
@@ -165,6 +290,8 @@ def delete_gas_cylinder(item_id):
 @bp.post("/gas-cylinders/<int:item_id>/archive")
 def archive_gas_cylinder(item_id):
     """Retire a cylinder that is below one quarter of its full weight."""
+    # Guard the balance read: a concurrent gas movement could change it.
+    guard.acquire()
     item = _get_or_404(GasCylinder, item_id)
     if not item.archived:
         remaining = item.remaining_weight or 0.0
@@ -208,7 +335,12 @@ def list_gas_cylinder_refills(item_id):
 
 @bp.post("/gas-cylinders/<int:item_id>/refills")
 def create_gas_cylinder_refill(item_id):
-    """Record a refill: the cylinder comes back full and is unarchived."""
+    """Record a refill: the cylinder comes back full and is unarchived.
+
+    Takes the mutation guard so a concurrent gas movement cannot lose this
+    balance reset (both change the same ``remaining_weight``).
+    """
+    guard.acquire()
     cylinder = _get_or_404(GasCylinder, item_id)
     data = _json_body()
     reference = data.get("reference")
@@ -226,11 +358,11 @@ def create_gas_cylinder_refill(item_id):
     return jsonify(refill.to_dict()), 201
 
 
-# Gas-system states map to the operation kind reported in the cylinder log.
-_GAS_MOVEMENT_KINDS = {
-    "VUOTO": "recharge",
-    "RECUPERO": "recovery",
-    "RICUPERO_RICARICA": "recovery_recharge",
+# Gas operations map to the kind reported in the cylinder log.
+_OPERATION_TO_KIND = {
+    "fill": "recharge",
+    "recovery": "recovery",
+    "recovery_recharge": "recovery_recharge",
 }
 # Deterministic tie-break when two operations share the same time.
 _OPERATION_ORDER = {
@@ -247,7 +379,9 @@ def _cylinder_operations(cylinder: GasCylinder) -> list[dict]:
     Derived on read from ``REFILLS`` and the ``REPAIR_WORK_LOG`` rows that
     reference the cylinder; nothing is persisted. Each entry carries its source
     reference (the refill's reference text, or the work-log entry's repair id,
-    entry id, and operator) and the cylinder's remaining weight after it.
+    entry id, and operator) and the cylinder's remaining weight after it. A
+    combined operation reports the measured net addition and marks the
+    recovered weight as calculated (nameplate minus the net addition).
     """
     dated: list[tuple[datetime, int, int, dict]] = []
 
@@ -277,9 +411,9 @@ def _cylinder_operations(cylinder: GasCylinder) -> list[dict]:
         .all()
     )
     for entry in movements:
-        kind = _GAS_MOVEMENT_KINDS.get(entry.gas_system_state)
+        kind = _OPERATION_TO_KIND.get(entry.gas_operation)
         if kind is None:
-            # Not a gas-affecting movement (e.g. PIENO, or no state): skip.
+            # Not a gas-affecting movement (ordinary work or none): skip.
             continue
         when = entry.start_time or entry.end_time
         dated.append(
@@ -293,9 +427,14 @@ def _cylinder_operations(cylinder: GasCylinder) -> list[dict]:
                     "repair_id": entry.id_repairs,
                     "work_log_id": entry.id,
                     "operator": entry.operator,
-                    "gas_system_state": entry.gas_system_state,
-                    "recharged_weight": entry.gas_recharge_weight,
-                    "recovered_weight": entry.gas_recovered_weight,
+                    "gas_operation": entry.gas_operation,
+                    "recharged_weight": entry.recharged_kg(),
+                    "recovered_weight": entry.recovered_kg(),
+                    "net_added_weight": entry.gas_measured_kg
+                    if entry.gas_operation == "recovery_recharge"
+                    else None,
+                    "recovered_calculated": entry.gas_operation
+                    == "recovery_recharge",
                 },
             )
         )

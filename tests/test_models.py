@@ -1,7 +1,6 @@
 """Model and registry tests (task group 1)."""
 
 from app.models import (
-    GAS_SYSTEM_STATES,
     AppUser,
     Customer,
     GasCylinder,
@@ -45,8 +44,24 @@ def test_gas_cylinder_lifecycle_fields(app):
     assert "archived" in columns
     assert columns["archived"].nullable is False
     assert columns["full_weight"].nullable is False
-    assert "RECUPERO" in GAS_SYSTEM_STATES
-    assert "RICUPERO_RICARICA" in GAS_SYSTEM_STATES
+
+
+def test_refrigerator_installation_fields(app):
+    """Refrigerators carry the installation link and gas type (task 1.1)."""
+    columns = {c.name for c in Refrigerator.__table__.columns}
+    assert {"allestimento_id", "gas_kind"} <= columns
+    indexes = {index.name: index for index in Refrigerator.__table__.indexes}
+    assert "uq_refrigerators_allestimento" in indexes
+    assert indexes["uq_refrigerators_allestimento"].unique is True
+
+
+def test_work_log_gas_operation_fields(app):
+    """Work logs carry the operation and measured-weight columns (task 1.1)."""
+    columns = {c.name for c in RepairWorkLog.__table__.columns}
+    assert {"gas_operation", "gas_measured_kg", "gas_nameplate_kg"} <= columns
+    repair_columns = {c.name: c for c in Repairs.__table__.columns}
+    assert "gas_equipment_locked" in repair_columns
+    assert repair_columns["gas_equipment_locked"].nullable is False
 
 
 def test_refill_columns(app):

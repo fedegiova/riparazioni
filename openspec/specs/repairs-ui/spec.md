@@ -100,40 +100,80 @@ and deleting a part.
 - **THEN** the part is removed and no longer saved with the repair
 
 ### Requirement: Manage work-log entries from the repair page
-The repair page SHALL show the repair's work-log entries in a table with a
-per-row control to cancel (delete) an entry or to open it for editing, and a
-control to add a work log.
+The repair page SHALL show the repair's work-log entries and their descriptions in a table. On active repairs, it SHALL provide per-row controls to delete or edit an entry and a control to add a work log. On archived repairs, the work-log table SHALL remain visible without mutation controls.
 
 #### Scenario: Cancel a work-log entry
-- **WHEN** the user cancels a work-log entry
+- **WHEN** the user cancels a work-log entry on an active repair
 - **THEN** the entry is deleted, and any gas-cylinder balance it recorded is restored
 
 #### Scenario: Open a work-log entry for editing
-- **WHEN** the user opens a work-log entry
+- **WHEN** the user opens a work-log entry for editing on an active repair
 - **THEN** the application navigates to that entry's work-log page
 
 #### Scenario: Add a work log
-- **WHEN** the user activates the add-work-log control
+- **WHEN** the user activates the add-work-log control on an active repair
 - **THEN** the application opens the work-log page for a new entry on that repair
 
+#### Scenario: View descriptions on an archived repair
+- **WHEN** the user opens an archived repair
+- **THEN** its work logs and descriptions are visible, but add, edit, stop, and delete controls are unavailable
+
 ### Requirement: Archive a repair
-The repair page SHALL provide an archive control that closes the repair.
+The repair page SHALL provide an archive control that closes the repair. If running timers block archiving, the application SHALL explain the blocker and let the user stop the timers explicitly before retrying.
 
 #### Scenario: Archive closes the repair
-- **WHEN** the user archives a repair
+- **WHEN** the user archives a repair with no running timers
 - **THEN** the repair receives an end date and is no longer listed as active
 
+#### Scenario: Manager must stop running timers
+- **WHEN** the user attempts to archive a repair with running timers
+- **THEN** the application identifies the blocking timers, the repair remains active, and the timers are not automatically stopped
+
 ### Requirement: Work-log editor page
-The work-log page SHALL allow editing an entry's start time, end time, and
-operator, and adding a gas recharge.
+On an active repair, the work-log editor SHALL support start time, end time, operator, and optional description. It SHALL require a configured operator for a new entry, with no free-text fallback. It SHALL offer a gas operation selector with None, Fill, Recovery, and Recovery + recharge, defaulting to None for new work logs.
 
 #### Scenario: Edit times and operator
-- **WHEN** the user changes a work-log entry's start time, end time, or operator and saves
+- **WHEN** the user changes a work-log entry's start time, end time, operator, or description and saves
 - **THEN** the change is persisted to that entry
 
+#### Scenario: New log requires operator selection
+- **WHEN** the user opens a new work log and has not selected a configured operator
+- **THEN** the application prevents submission and indicates that operator selection is required
+
+#### Scenario: Configured operators are unavailable
+- **WHEN** the configured operator list is empty or cannot be loaded for a new work log
+- **THEN** the application explains why the log cannot be created instead of accepting an arbitrary operator
+
 #### Scenario: Add a gas recharge
-- **WHEN** the user records a gas recharge on the entry
-- **THEN** the entry stores the gas data and any cylinder balance is updated accordingly
+- **WHEN** the user saves a valid Fill or Recovery + recharge operation
+- **THEN** the work log displays the saved gas data and the cylinder balance reflects the movement
+
+#### Scenario: None leaves the gas fields hidden
+- **WHEN** the user selects None
+- **THEN** the gas inputs are hidden and no gas movement is submitted; explicitly switching a saved gas operation to None requests reversal
+
+#### Scenario: Gas operation shows equipment and matching cylinders
+- **WHEN** the user selects a gas operation on a repair with valid installed equipment
+- **THEN** the editor identifies the refrigerator, shows its nameplate capacity and gas type, and offers cylinders of that gas type only
+
+#### Scenario: Only the applicable measurement is editable
+- **WHEN** the user selects Fill, Recovery, or Recovery + recharge
+- **THEN** the editor respectively requires only the added amount, recovered amount, or measured net added amount as the weight input; for combined work it previews the recovered amount as calculated, not editable
+
+#### Scenario: Equipment blockers are actionable
+- **WHEN** the user selects a gas operation on a repair missing an allestimento or configured refrigerator, or whose locked refrigerator has been replaced
+- **THEN** the editor blocks that gas save and directs the user respectively to the repair's vehicle selector, Anagrafica, or a separate repair for the new unit
+
+#### Scenario: Metadata edits leave the gas operation unchanged
+- **WHEN** the user edits only the time, operator, or description of a saved gas work log
+- **THEN** the editor saves those fields without submitting a replacement gas operation
+
+### Requirement: Show the repair's gas-work lock
+The repair page SHALL identify the refrigerator locked to the repair and SHALL prevent changing the associated vehicle after the gas-work lock is set.
+
+#### Scenario: A locked repair shows its recorded unit
+- **WHEN** the user opens a repair locked to a refrigerator that has since been replaced on the allestimento
+- **THEN** the repair shows the recorded refrigerator, not the replacement, and the vehicle selector cannot reassign the repair
 
 ### Requirement: Prefill the start time when creating
 The application SHALL prefill the start date of a new repair and the start time
@@ -148,12 +188,11 @@ of a new work-log entry with the current date and time.
 - **THEN** the start time field already holds the current date and time
 
 ### Requirement: Stop a work-log entry
-The repair page SHALL provide a control on each open work-log entry that closes
-it by setting its end time.
+The repair page SHALL provide a control on each running work-log entry on an active repair that closes it by setting its end time.
 
 #### Scenario: Stop closes the work-log entry
-- **WHEN** the user stops an open work-log entry
-- **THEN** the entry receives an end time and no longer appears as open
+- **WHEN** the user stops a running work-log entry on an active repair
+- **THEN** the entry receives an end time and no longer appears as running
 
 ### Requirement: Start a work log from the landing page
 The active-repairs landing SHALL provide a per-row control that opens a new

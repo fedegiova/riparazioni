@@ -21,8 +21,6 @@ from datetime import UTC, datetime
 
 from app.extensions import db
 
-GAS_SYSTEM_STATES = ("VUOTO", "PIENO", "RECUPERO", "RICUPERO_RICARICA")
-
 
 def _now() -> datetime:
     """Naive UTC timestamp default (replacement for deprecated datetime.utcnow)."""
@@ -43,6 +41,28 @@ class Refrigerator(db.Model):
     brand = db.Column(db.String(32))
     gas_kg = db.Column(db.Float)
     notes = db.Column(db.String(4000))
+    # External reference, no DB FK (see module docstring): validated in the
+    # service layer against DATIDBSTORICO.TBALLLESTIMENTI. At most one
+    # refrigerator is installed per allestimento (partial unique index below);
+    # an uninstalled unit keeps a NULL link.
+    allestimento_id = db.Column(db.Integer)
+    # Gas type drawn from the configured gas_types setting; must match the
+    # selected cylinder for a gas operation.
+    gas_kind = db.Column(db.String(32))
+
+    __table_args__ = (
+        # One current installation per allestimento. Several uninstalled units
+        # are allowed, so the uniqueness is filtered to non-NULL links (SQLite
+        # and MSSQL both support the filtered form; MSSQL forbids a plain
+        # unique index when many rows are NULL).
+        db.Index(
+            "uq_refrigerators_allestimento",
+            "allestimento_id",
+            unique=True,
+            sqlite_where=db.text("allestimento_id IS NOT NULL"),
+            mssql_where=db.text("allestimento_id IS NOT NULL"),
+        ),
+    )
 
     # passive_deletes: do not NULL out referencing repairs on delete — let the
     # DB foreign key reject the delete (surfaced as HTTP 409).
@@ -58,6 +78,8 @@ class Refrigerator(db.Model):
             "brand": self.brand,
             "gas_kg": self.gas_kg,
             "notes": self.notes,
+            "allestimento_id": self.allestimento_id,
+            "gas_kind": self.gas_kind,
         }
 
 
@@ -213,6 +235,12 @@ class Repairs(db.Model):
     delivery_date = db.Column(db.Date)
     notes = db.Column(db.String(4000))
     refrigerator = db.Column(db.Integer, db.ForeignKey("REFRIGERATORS.id"))
+    # Set when the repair's first gas operation binds the installed unit, and
+    # never cleared: after that the vehicle and refrigerator are frozen so a
+    # later replacement cannot silently re-point the repair at another unit.
+    gas_equipment_locked = db.Column(
+        db.Boolean, nullable=False, default=False, server_default=db.text("0")
+    )
     # Frozen calendar-adjusted total, written once when the repair is archived.
     # NULL while the repair is active (its total is computed on read) and after
     # a reopen; the service layer reads it instead of recomputing when set.
@@ -223,6 +251,10 @@ class Repairs(db.Model):
     customer_name = None
     total_hours = 0.0
     gas_used = 0.0
+    # Whether the repair's recorded refrigerator is still the one installed on
+    # its allestimento (detail reads only): None when no refrigerator is
+    # recorded, else True/False.
+    refrigerator_installed = None
     # Pictures owned by this repair (owner_type='repair'), attached on read.
     pictures = None
 
@@ -245,6 +277,7 @@ class Repairs(db.Model):
             "customer_name": self.customer_name,
             "vehicle": self.vehicle,
             "refrigerator": self.refrigerator,
+            "gas_equipment_locked": self.gas_equipment_locked,
             "start_data": self.start_data.isoformat() if self.start_data else None,
             "end_data": self.end_data.isoformat() if self.end_data else None,
             "delivery_date": self.delivery_date.isoformat()
@@ -255,6 +288,7 @@ class Repairs(db.Model):
             "notes": self.notes,
         }
         if include_details:
+            data["refrigerator_installed"] = self.refrigerator_installed
             data["work_log"] = [entry.to_dict() for entry in self.work_log]
             data["parts"] = [part.to_dict() for part in self.parts]
             data["pictures"] = [picture.to_dict() for picture in (self.pictures or [])]
@@ -274,9 +308,47 @@ class RepairWorkLog(db.Model):
     gas_recharge = db.Column(db.Integer, db.ForeignKey("GAS_CYLINDERS.id"))
     gas_recharge_weight = db.Column(db.Float)
     gas_recovered_weight = db.Column(db.Float)
+    # Operation discriminator for the gas contract that replaces the state
+    # column above: none | fill | recovery | recovery_recharge. NULL on rows
+    # written before the change (read as ordinary work). Kept alongside the
+    # legacy columns; the service layer stops reading those when the new
+    # operation model lands.
+    gas_operation = db.Column(db.String(20))
+    # The single measured mass in kg: the added amount for fill, the recovered
+    # amount for recovery, the net added amount for recovery_recharge.
+    gas_measured_kg = db.Column(db.Float)
+    # Nameplate capacity used for a combined operation, stored so a later edit
+    # of the refrigerator cannot change past calculated recoveries.
+    gas_nameplate_kg = db.Column(db.Float)
 
     repair = db.relationship("Repairs", back_populates="work_log")
     cylinder = db.relationship("GasCylinder", back_populates="work_log_entries")
+
+    def recharged_kg(self):
+        """Gross gas recharged by this entry, in kg (None when it moved none).
+
+        A fill recharges exactly what was added; a combined operation recharges
+        the whole nameplate (the part not recovered from the unit).
+        """
+        if self.gas_operation == "fill":
+            return self.gas_measured_kg
+        if self.gas_operation == "recovery_recharge":
+            return self.gas_nameplate_kg
+        return None
+
+    def recovered_kg(self):
+        """Gas recovered into the cylinder, in kg (None when it moved none).
+
+        A recovery is measured; a combined operation's recovery is calculated
+        as nameplate capacity minus the measured net addition.
+        """
+        if self.gas_operation == "recovery":
+            return self.gas_measured_kg
+        if self.gas_operation == "recovery_recharge":
+            if self.gas_nameplate_kg is None or self.gas_measured_kg is None:
+                return None
+            return self.gas_nameplate_kg - self.gas_measured_kg
+        return None
 
     def to_dict(self) -> dict:
         return {
@@ -285,10 +357,12 @@ class RepairWorkLog(db.Model):
             "end_time": self.end_time.isoformat() if self.end_time else None,
             "operator": self.operator,
             "description": self.description,
-            "gas_system_state": self.gas_system_state,
+            "gas_operation": self.gas_operation,
             "gas_recharge": self.gas_recharge,
-            "gas_recharge_weight": self.gas_recharge_weight,
-            "gas_recovered_weight": self.gas_recovered_weight,
+            "gas_measured_kg": self.gas_measured_kg,
+            "gas_nameplate_kg": self.gas_nameplate_kg,
+            "recharged_weight": self.recharged_kg(),
+            "recovered_weight": self.recovered_kg(),
         }
 
 

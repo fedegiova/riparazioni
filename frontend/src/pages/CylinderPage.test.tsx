@@ -95,4 +95,34 @@ describe('CylinderPage', () => {
     expect(screen.getByText('Boom')).toBeTruthy()
     expect(screen.queryByText('No operations.')).toBeNull()
   })
+
+  it('distinguishes measured net addition and calculated recovery', async () => {
+    getGasCylinder.mockResolvedValue({
+      id: 7,
+      serial_nr: 'CYL-7',
+      full_weight: 10,
+      remaining_weight: 9.6,
+      archived: false,
+    })
+    getCylinderOperations.mockResolvedValue([
+      {
+        kind: 'recovery_recharge',
+        date: '2026-04-01T09:00:00',
+        repair_id: 12,
+        work_log_id: 34,
+        net_added_weight: 0.4,
+        recharged_weight: 3,
+        recovered_weight: 2.6,
+        recovered_calculated: true,
+        remaining_weight: 9.6,
+      },
+    ])
+    renderPage()
+
+    expect(await screen.findByText('Recovery + recharge')).toBeTruthy()
+    expect(
+      screen.getByText(/Net added 0.4 kg, Recharged 3 kg, Recovered \(calculated\) 2.6 kg/),
+    ).toBeTruthy()
+    expect(screen.getByText('9.6 kg')).toBeTruthy()
+  })
 })

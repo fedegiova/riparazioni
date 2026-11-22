@@ -8,7 +8,6 @@ explicitly excluded from migrations (see app/models/external.py).
 
 from app.models.external import AppUser, Customer, Vehicle
 from app.models.owned import (
-    GAS_SYSTEM_STATES,
     GasCylinder,
     Picture,
     Refill,
@@ -22,7 +21,6 @@ from app.models.owned import (
 )
 
 __all__ = [
-    "GAS_SYSTEM_STATES",
     "AppUser",
     "Customer",
     "GasCylinder",

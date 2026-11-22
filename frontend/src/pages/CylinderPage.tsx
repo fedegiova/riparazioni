@@ -33,11 +33,17 @@ function formatWeight(value: number | null | undefined): string {
 
 function operationDetails(operation: CylinderOperation): string {
   const parts: string[] = []
+  if (operation.net_added_weight != null) {
+    parts.push(`Net added ${formatWeight(operation.net_added_weight)} kg`)
+  }
   if (operation.recharged_weight != null) {
     parts.push(`Recharged ${formatWeight(operation.recharged_weight)} kg`)
   }
   if (operation.recovered_weight != null) {
-    parts.push(`Recovered ${formatWeight(operation.recovered_weight)} kg`)
+    const label = operation.recovered_calculated
+      ? 'Recovered (calculated)'
+      : 'Recovered'
+    parts.push(`${label} ${formatWeight(operation.recovered_weight)} kg`)
   }
   return parts.length > 0 ? parts.join(', ') : '—'
 }

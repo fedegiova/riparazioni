@@ -61,6 +61,106 @@ class TestRefrigerators:
         assert client.get(f"/api/v1/refrigerators/{created['id']}").status_code == 200
 
 
+class TestRefrigeratorInstallations:
+    def _installed(self, client, allestimento_id=1, **overrides):
+        payload = {
+            "serial_nr": "SN-1",
+            "brand": "B",
+            "model": "M",
+            "gas_kg": 3.0,
+            "gas_kind": "R32",
+            "allestimento_id": allestimento_id,
+        }
+        payload.update(overrides)
+        return client.post("/api/v1/refrigerators", json=payload)
+
+    def test_install_against_known_allestimento(self, client, db):
+        response = self._installed(client)
+        assert response.status_code == 201
+        payload = response.get_json()
+        assert payload["allestimento_id"] == 1
+        assert payload["gas_kind"] == "R32"
+        listing = client.get("/api/v1/refrigerators?allestimento_id=1").get_json()
+        assert [item["id"] for item in listing] == [payload["id"]]
+
+    def test_unknown_allestimento_rejected(self, client, db):
+        assert self._installed(client, allestimento_id=99999).status_code == 409
+
+    def test_incomplete_nameplate_rejected(self, client, db):
+        response = client.post(
+            "/api/v1/refrigerators",
+            json={
+                "allestimento_id": 1,
+                "serial_nr": "SN",
+                "brand": "B",
+                "model": "M",
+                "gas_kind": "R32",
+            },
+        )
+        assert response.status_code == 400
+
+    def test_non_positive_capacity_rejected(self, client, db):
+        assert self._installed(client, gas_kg=0).status_code == 400
+
+    def test_unconfigured_gas_type_rejected(self, client, db):
+        assert self._installed(client, gas_kind="R999").status_code == 400
+
+    def test_duplicate_install_conflicts(self, client, db):
+        assert self._installed(client, serial_nr="A").status_code == 201
+        assert self._installed(client, serial_nr="B").status_code == 409
+
+    def test_explicit_replacement_moves_installation(self, client, db):
+        first = self._installed(client, serial_nr="OLD").get_json()
+        second = client.post(
+            "/api/v1/refrigerators",
+            json={
+                "serial_nr": "NEW",
+                "brand": "B",
+                "model": "M",
+                "gas_kg": 3.0,
+                "gas_kind": "R32",
+            },
+        ).get_json()
+
+        response = client.post(
+            f"/api/v1/refrigerators/{second['id']}/install",
+            json={"allestimento_id": 1},
+        )
+        assert response.status_code == 200
+        assert response.get_json()["allestimento_id"] == 1
+
+        # The old record is preserved but no longer installed.
+        old = client.get(f"/api/v1/refrigerators/{first['id']}").get_json()
+        assert old["allestimento_id"] is None
+        installed = client.get("/api/v1/refrigerators?allestimento_id=1").get_json()
+        assert [item["id"] for item in installed] == [second["id"]]
+
+    def test_install_incomplete_record_rejected(self, client, db):
+        created = client.post("/api/v1/refrigerators", json={"serial_nr": "X"}).get_json()
+        response = client.post(
+            f"/api/v1/refrigerators/{created['id']}/install",
+            json={"allestimento_id": 1},
+        )
+        assert response.status_code == 400
+
+    def test_delete_installed_conflict(self, client, db):
+        created = self._installed(client).get_json()
+        assert client.delete(f"/api/v1/refrigerators/{created['id']}").status_code == 409
+
+    def test_uninstall_then_delete(self, client, db):
+        created = self._installed(client).get_json()
+        response = client.put(
+            f"/api/v1/refrigerators/{created['id']}", json={"allestimento_id": None}
+        )
+        assert response.status_code == 200
+        assert client.delete(f"/api/v1/refrigerators/{created['id']}").status_code == 204
+
+    def test_multiple_uninstalled_units_allowed(self, client, db):
+        first = client.post("/api/v1/refrigerators", json={"serial_nr": "A"}).get_json()
+        second = client.post("/api/v1/refrigerators", json={"serial_nr": "B"}).get_json()
+        assert first["id"] != second["id"]
+
+
 class TestGasCylinders:
     def test_create_without_full_weight_rejected(self, client, db):
         response = client.post(
@@ -262,16 +362,16 @@ class TestCylinderOperations:
         recharge = RepairWorkLog(
             id_repairs=repair_id,
             gas_recharge=cylinder["id"],
-            gas_system_state="VUOTO",
-            gas_recharge_weight=2.5,
+            gas_operation="fill",
+            gas_measured_kg=2.5,
             operator="Mario",
             start_time=datetime(2026, 3, 1, 9, 0),
         )
         recovery = RepairWorkLog(
             id_repairs=repair_id,
             gas_recharge=cylinder["id"],
-            gas_system_state="RECUPERO",
-            gas_recovered_weight=1.0,
+            gas_operation="recovery",
+            gas_measured_kg=1.0,
             operator="Luigi",
             start_time=datetime(2026, 2, 15, 9, 0),
         )
@@ -288,6 +388,7 @@ class TestCylinderOperations:
         assert recharge_entry["work_log_id"] == recharge.id
         assert recharge_entry["operator"] == "Mario"
         assert recharge_entry["recharged_weight"] == 2.5
+        assert recharge_entry["gas_operation"] == "fill"
 
         recovery_entry = log[1]
         assert recovery_entry["work_log_id"] == recovery.id
@@ -297,7 +398,7 @@ class TestCylinderOperations:
         assert refill_entry["date"] == "2026-02-01"
         assert refill_entry["reference"] == "RIF-1"
 
-    def test_recover_and_recharge_movement_kind(self, client, db):
+    def test_combined_operation_reports_net_and_calculated_recovery(self, client, db):
         cylinder = client.post(
             "/api/v1/gas-cylinders", json={"full_weight": 10.0}
         ).get_json()
@@ -306,20 +407,23 @@ class TestCylinderOperations:
             RepairWorkLog(
                 id_repairs=repair_id,
                 gas_recharge=cylinder["id"],
-                gas_system_state="RICUPERO_RICARICA",
-                gas_recharge_weight=2.0,
-                gas_recovered_weight=1.0,
+                gas_operation="recovery_recharge",
+                gas_measured_kg=0.4,
+                gas_nameplate_kg=3.0,
                 start_time=datetime(2026, 4, 1, 9, 0),
             )
         )
         db.session.commit()
 
         log = client.get(f"/api/v1/gas-cylinders/{cylinder['id']}/operations").get_json()
-        assert log[0]["kind"] == "recovery_recharge"
-        assert log[0]["recharged_weight"] == 2.0
-        assert log[0]["recovered_weight"] == 1.0
-        # 10.0 full + 1.0 recovered - 2.0 recharged
-        assert log[0]["remaining_weight"] == 9.0
+        entry = log[0]
+        assert entry["kind"] == "recovery_recharge"
+        assert entry["recharged_weight"] == 3.0
+        assert entry["recovered_weight"] == 2.6
+        assert entry["net_added_weight"] == 0.4
+        assert entry["recovered_calculated"] is True
+        # 10.0 full - 0.4 net added
+        assert entry["remaining_weight"] == 9.6
 
     def test_log_reports_running_remaining_weight(self, client, db):
         cylinder = client.post(
@@ -331,15 +435,15 @@ class TestCylinderOperations:
                 RepairWorkLog(
                     id_repairs=repair_id,
                     gas_recharge=cylinder["id"],
-                    gas_system_state="VUOTO",
-                    gas_recharge_weight=2.5,
+                    gas_operation="fill",
+                    gas_measured_kg=2.5,
                     start_time=datetime(2026, 2, 15, 9, 0),
                 ),
                 RepairWorkLog(
                     id_repairs=repair_id,
                     gas_recharge=cylinder["id"],
-                    gas_system_state="RECUPERO",
-                    gas_recovered_weight=1.0,
+                    gas_operation="recovery",
+                    gas_measured_kg=1.0,
                     start_time=datetime(2026, 3, 1, 9, 0),
                 ),
             ]
@@ -360,8 +464,8 @@ class TestCylinderOperations:
             RepairWorkLog(
                 id_repairs=repair_id,
                 gas_recharge=cylinder["id"],
-                gas_system_state="VUOTO",
-                gas_recharge_weight=8.0,
+                gas_operation="fill",
+                gas_measured_kg=8.0,
                 start_time=datetime(2026, 2, 1, 9, 0),
             )
         )
@@ -388,14 +492,32 @@ class TestCylinderOperations:
             RepairWorkLog(
                 id_repairs=repair_id,
                 gas_recharge=other["id"],
-                gas_system_state="VUOTO",
-                gas_recharge_weight=1.0,
+                gas_operation="fill",
+                gas_measured_kg=1.0,
                 start_time=datetime(2026, 3, 1, 9, 0),
             )
         )
         db.session.commit()
 
         log = client.get(f"/api/v1/gas-cylinders/{mine['id']}/operations").get_json()
+        assert log == []
+
+    def test_ordinary_work_is_not_a_movement(self, client, db):
+        cylinder = client.post(
+            "/api/v1/gas-cylinders", json={"full_weight": 10.0}
+        ).get_json()
+        repair_id = _new_repair(db)
+        db.session.add(
+            RepairWorkLog(
+                id_repairs=repair_id,
+                gas_recharge=cylinder["id"],
+                gas_operation="none",
+                start_time=datetime(2026, 3, 1, 9, 0),
+            )
+        )
+        db.session.commit()
+
+        log = client.get(f"/api/v1/gas-cylinders/{cylinder['id']}/operations").get_json()
         assert log == []
 
     def test_log_empty_and_unknown(self, client, db):

@@ -1,14 +1,39 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import AnagraficaPage from './AnagraficaPage'
 import { ApiError } from '../api/client'
 
-const { listCustomers, listVehicles } = vi.hoisted(() => ({
+const {
+  listCustomers,
+  listVehicles,
+  listRefrigerators,
+  createRefrigerator,
+  updateRefrigerator,
+  installRefrigerator,
+  getGasTypes,
+} = vi.hoisted(() => ({
   listCustomers: vi.fn(),
   listVehicles: vi.fn(),
+  listRefrigerators: vi.fn(),
+  createRefrigerator: vi.fn(),
+  updateRefrigerator: vi.fn(),
+  installRefrigerator: vi.fn(),
+  getGasTypes: vi.fn(),
 }))
 
 vi.mock('../api/reference', () => ({ listCustomers, listVehicles }))
+vi.mock('../api/equipment', () => ({
+  listRefrigerators,
+  createRefrigerator,
+  updateRefrigerator,
+  installRefrigerator,
+}))
+vi.mock('../api/settings', () => ({ getGasTypes }))
+
+beforeEach(() => {
+  getGasTypes.mockResolvedValue(['R32', 'R410A'])
+  listRefrigerators.mockResolvedValue([])
+})
 
 afterEach(() => {
   cleanup()
@@ -141,20 +166,156 @@ describe('AnagraficaPage', () => {
     expect(screen.getByText('EF456GH')).toBeTruthy()
   })
 
-  it('offers no create, edit, or delete controls', async () => {
+  it('keeps the legacy vehicle and customer records read-only', async () => {
     listCustomers.mockResolvedValue([rossi])
     listVehicles.mockResolvedValue([daily])
     renderPage()
 
     await screen.findByText('Rossi S.p.A.')
+    // The Clienti tab offers no write control at all.
     expect(
       screen.queryByRole('button', { name: /create|new|edit|delete|save/i }),
     ).toBeNull()
 
     fireEvent.click(screen.getByRole('tab', { name: 'Allestimenti' }))
     await screen.findByText('AB123CD')
+    // Only the app-owned refrigerator can be managed; the vehicle is not.
     expect(
-      screen.queryByRole('button', { name: /create|new|edit|delete|save/i }),
+      screen.queryByRole('button', {
+        name: /edit vehicle|delete vehicle|new vehicle|edit allestimento/i,
+      }),
     ).toBeNull()
+    expect(
+      screen.getByRole('button', { name: 'Add refrigerator for AB123CD' }),
+    ).toBeTruthy()
+  })
+
+  it('shows the installed refrigerator for a vehicle', async () => {
+    listCustomers.mockResolvedValue([])
+    listVehicles.mockResolvedValue([daily])
+    listRefrigerators.mockResolvedValue([
+      { id: 5, serial_nr: 'FR-1', gas_kind: 'R32', gas_kg: 3, allestimento_id: 1 },
+    ])
+    renderPage()
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Allestimenti' }))
+
+    expect(await screen.findByText(/FR-1/)).toBeTruthy()
+    expect(screen.getByText('R32')).toBeTruthy()
+    expect(
+      screen.queryByRole('button', { name: 'Add refrigerator for AB123CD' }),
+    ).toBeNull()
+    expect(
+      screen.getByRole('button', { name: 'Edit refrigerator for AB123CD' }),
+    ).toBeTruthy()
+    expect(
+      screen.getByRole('button', { name: 'Replace refrigerator for AB123CD' }),
+    ).toBeTruthy()
+  })
+
+  it('adds a refrigerator to an allestimento with none installed', async () => {
+    listCustomers.mockResolvedValue([])
+    listVehicles.mockResolvedValue([daily])
+    listRefrigerators
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([
+        { id: 9, serial_nr: 'FR-9', gas_kind: 'R32', gas_kg: 3, allestimento_id: 1 },
+      ])
+    createRefrigerator.mockResolvedValue({ id: 9 })
+    renderPage()
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Allestimenti' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Add refrigerator for AB123CD' }))
+
+    fireEvent.change(screen.getByLabelText('Serial number'), { target: { value: 'FR-9' } })
+    fireEvent.change(screen.getByLabelText('Manufacturer'), { target: { value: 'B' } })
+    fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'M' } })
+    fireEvent.change(screen.getByLabelText('Gas type'), { target: { value: 'R32' } })
+    fireEvent.change(screen.getByLabelText(/Nameplate capacity/), {
+      target: { value: '3' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(createRefrigerator).toHaveBeenCalled())
+    expect(createRefrigerator.mock.calls[0][0]).toMatchObject({
+      serial_nr: 'FR-9',
+      brand: 'B',
+      model: 'M',
+      gas_kind: 'R32',
+      gas_kg: 3,
+      allestimento_id: 1,
+    })
+    // The row refreshes with the saved unit.
+    expect(await screen.findByText(/FR-9/)).toBeTruthy()
+  })
+
+  it('edits an installed refrigerator', async () => {
+    listCustomers.mockResolvedValue([])
+    listVehicles.mockResolvedValue([daily])
+    listRefrigerators.mockResolvedValue([
+      { id: 5, serial_nr: 'FR-1', brand: 'B', model: 'OLD', gas_kind: 'R32', gas_kg: 3, allestimento_id: 1 },
+    ])
+    updateRefrigerator.mockResolvedValue({ id: 5 })
+    renderPage()
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Allestimenti' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit refrigerator for AB123CD' }))
+
+    fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'NEW' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(updateRefrigerator).toHaveBeenCalled())
+    expect(updateRefrigerator.mock.calls[0][0]).toBe(5)
+    expect(updateRefrigerator.mock.calls[0][1]).toMatchObject({ model: 'NEW' })
+  })
+
+  it('replaces the installed refrigerator explicitly', async () => {
+    listCustomers.mockResolvedValue([])
+    listVehicles.mockResolvedValue([daily])
+    listRefrigerators.mockResolvedValue([
+      { id: 5, serial_nr: 'FR-1', brand: 'B', model: 'M', gas_kind: 'R32', gas_kg: 3, allestimento_id: 1 },
+    ])
+    createRefrigerator.mockResolvedValue({ id: 12 })
+    installRefrigerator.mockResolvedValue({ id: 12 })
+    renderPage()
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Allestimenti' }))
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Replace refrigerator for AB123CD' }),
+    )
+
+    fireEvent.change(screen.getByLabelText('Serial number'), { target: { value: 'FR-NEW' } })
+    fireEvent.change(screen.getByLabelText('Manufacturer'), { target: { value: 'B' } })
+    fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'M' } })
+    fireEvent.change(screen.getByLabelText('Gas type'), { target: { value: 'R32' } })
+    fireEvent.change(screen.getByLabelText(/Nameplate capacity/), {
+      target: { value: '3' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(installRefrigerator).toHaveBeenCalledWith(12, 1))
+    expect(createRefrigerator).toHaveBeenCalled()
+  })
+
+  it('reports a rejected refrigerator save', async () => {
+    listCustomers.mockResolvedValue([])
+    listVehicles.mockResolvedValue([daily])
+    listRefrigerators.mockResolvedValue([])
+    createRefrigerator.mockRejectedValue(new ApiError(409, 'already installed'))
+    renderPage()
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Allestimenti' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Add refrigerator for AB123CD' }))
+
+    fireEvent.change(screen.getByLabelText('Serial number'), { target: { value: 'FR-9' } })
+    fireEvent.change(screen.getByLabelText('Manufacturer'), { target: { value: 'B' } })
+    fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'M' } })
+    fireEvent.change(screen.getByLabelText('Gas type'), { target: { value: 'R32' } })
+    fireEvent.change(screen.getByLabelText(/Nameplate capacity/), {
+      target: { value: '3' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findByText('already installed')).toBeTruthy()
   })
 })

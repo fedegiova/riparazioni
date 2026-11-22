@@ -23,7 +23,7 @@ import EditIcon from '@mui/icons-material/Edit'
 import SearchIcon from '@mui/icons-material/Search'
 import StopCircleIcon from '@mui/icons-material/StopCircle'
 import { useNavigate, useParams } from 'react-router-dom'
-import { listServiceParts } from '../api/equipment'
+import { listServiceParts, getRefrigerator } from '../api/equipment'
 import { getVehicle, listCustomers, listVehicles } from '../api/reference'
 import {
   createRepair,
@@ -32,7 +32,7 @@ import {
   updateRepair,
   updateWorkLog,
 } from '../api/repairs'
-import type { ServicePart } from '../api/types'
+import type { Refrigerator, ServicePart } from '../api/types'
 import PictureSection from '../components/PictureSection'
 import SearchModal from '../components/SearchModal'
 import { useApi } from '../hooks/useApi'
@@ -74,6 +74,7 @@ function RepairPage() {
   const [deliveryDate, setDeliveryDate] = useState('')
   const [notes, setNotes] = useState('')
   const [parts, setParts] = useState<PartRow[]>([])
+  const [refrigerator, setRefrigerator] = useState<Refrigerator | null>(null)
 
   const [customerModal, setCustomerModal] = useState(false)
   const [vehicleModal, setVehicleModal] = useState(false)
@@ -124,6 +125,25 @@ function RepairPage() {
       })
       .catch(() => {
         // Keep the `#id` fallback when the plate cannot be resolved.
+      })
+    return () => {
+      active = false
+    }
+  }, [repair])
+
+  useEffect(() => {
+    const fridgeId = repair?.refrigerator ?? null
+    if (fridgeId == null) {
+      setRefrigerator(null)
+      return
+    }
+    let active = true
+    getRefrigerator(fridgeId)
+      .then((fridge) => {
+        if (active) setRefrigerator(fridge)
+      })
+      .catch(() => {
+        // Keep the numeric fallback when the refrigerator cannot be resolved.
       })
     return () => {
       active = false
@@ -257,10 +277,31 @@ function RepairPage() {
               fullWidth
               slotProps={{ htmlInput: { readOnly: true } }}
             />
-            <Button startIcon={<SearchIcon />} onClick={() => setVehicleModal(true)}>
+            <Button
+              startIcon={<SearchIcon />}
+              onClick={() => setVehicleModal(true)}
+              disabled={Boolean(repair?.gas_equipment_locked)}
+            >
               Search
             </Button>
           </Stack>
+          {repair?.gas_equipment_locked && (
+            <Alert
+              severity={
+                repair.refrigerator_installed === false ? 'warning' : 'info'
+              }
+            >
+              {refrigerator
+                ? `Refrigerator ${refrigerator.serial_nr ?? `#${refrigerator.id}`}${
+                    refrigerator.gas_kg != null
+                      ? ` (${refrigerator.gas_kg} kg)`
+                      : ''
+                  } is locked to this repair.`
+                : `Refrigerator #${repair.refrigerator} is locked to this repair.`}
+              {repair.refrigerator_installed === false &&
+                ' It was replaced on its allestimento; record gas work for the new unit on a separate repair.'}
+            </Alert>
+          )}
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
             <TextField
               label="Start date"

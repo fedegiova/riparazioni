@@ -10,7 +10,15 @@ from io import BytesIO
 from openpyxl import load_workbook
 from PIL import Image
 
-from app.models import Customer, GasCylinder, Repairs, RepairWorkLog, ServicePart
+from app.models import (
+    Customer,
+    GasCylinder,
+    Refrigerator,
+    Repairs,
+    RepairWorkLog,
+    ServicePart,
+    Vehicle,
+)
 
 
 def _now():
@@ -29,11 +37,30 @@ def _create_repair(client, **overrides):
     return client.post("/api/v1/repairs", json=payload)
 
 
-def _cylinder(db, remaining=10.0):
-    cyl = GasCylinder(gas_kind="R134a", full_weight=20.0, remaining_weight=remaining)
+def _cylinder(db, remaining=10.0, gas_kind="R32", full_weight=20.0):
+    cyl = GasCylinder(
+        gas_kind=gas_kind, full_weight=full_weight, remaining_weight=remaining
+    )
     db.session.add(cyl)
     db.session.commit()
     return cyl.id
+
+
+def _install_refrigerator(
+    db, allestimento_id=1, gas_kind="R32", gas_kg=3.0, serial="SN-1"
+):
+    """Install a refrigerator on an allestimento (defaults match _cylinder)."""
+    fridge = Refrigerator(
+        serial_nr=serial,
+        brand="B",
+        model="M",
+        gas_kind=gas_kind,
+        gas_kg=gas_kg,
+        allestimento_id=allestimento_id,
+    )
+    db.session.add(fridge)
+    db.session.commit()
+    return fridge.id
 
 
 def _add_log(client, repair_id, **fields):
@@ -219,15 +246,16 @@ class TestComputedFields:
         assert detail["total_hours"] == 0.0
 
     def test_gas_used_sums_recharges(self, client, db):
+        _install_refrigerator(db, gas_kg=20.0)
         cyl_id = _cylinder(db, remaining=20.0)
         repair_id = _create_repair(client).get_json()["id"]
         for weight in (2.5, 1.0):
             _add_log(
                 client,
                 repair_id,
-                gas_system_state="VUOTO",
+                gas_operation="fill",
                 gas_recharge=cyl_id,
-                gas_recharge_weight=weight,
+                gas_measured_kg=weight,
             )
         detail = client.get(f"/api/v1/repairs/{repair_id}").get_json()
         assert detail["gas_used"] == 3.5
@@ -235,6 +263,21 @@ class TestComputedFields:
         listing = client.get("/api/v1/repairs").get_json()
         row = next(item for item in listing if item["id"] == repair_id)
         assert row["gas_used"] == 3.5
+
+    def test_combined_reports_gross_recharge(self, client, db):
+        """A combined operation's gas_used is the nameplate, not the net addition."""
+        _install_refrigerator(db, gas_kg=3.0)
+        cyl_id = _cylinder(db, remaining=10.0)
+        repair_id = _create_repair(client).get_json()["id"]
+        _add_log(
+            client,
+            repair_id,
+            gas_operation="recovery_recharge",
+            gas_recharge=cyl_id,
+            gas_measured_kg=0.4,
+        )
+        detail = client.get(f"/api/v1/repairs/{repair_id}").get_json()
+        assert detail["gas_used"] == 3.0
 
     def test_gas_used_zero_without_gas_records(self, client, db):
         repair_id = _create_repair(client).get_json()["id"]
@@ -546,6 +589,7 @@ class TestArchive:
         assert detail["total_hours"] == 2.0
 
     def test_archive_leaves_gas_balances_untouched(self, client, db):
+        _install_refrigerator(db)
         cyl_id = _cylinder(db, remaining=10.0)
         repair_id = _create_repair(client).get_json()["id"]
         _add_log(
@@ -553,9 +597,9 @@ class TestArchive:
             repair_id,
             start_time="2026-01-01T08:00:00",
             end_time="2026-01-01T09:00:00",
-            gas_system_state="VUOTO",
+            gas_operation="fill",
             gas_recharge=cyl_id,
-            gas_recharge_weight=2.5,
+            gas_measured_kg=2.5,
         )
         assert client.put(
             f"/api/v1/repairs/{repair_id}", json={"end_data": "2026-01-01T10:00:00"}
@@ -805,6 +849,7 @@ class TestTimerHandoff:
         assert detail["work_log"][0]["end_time"] is None
 
     def test_failed_creation_leaves_the_previous_timer_running(self, client, db):
+        _install_refrigerator(db, gas_kg=20.0)
         cyl_id = _cylinder(db, remaining=10.0)
         repair_id = _create_repair(client).get_json()["id"]
         _add_log(client, repair_id, start_time="2026-01-01T08:00:00")
@@ -813,9 +858,9 @@ class TestTimerHandoff:
             client,
             repair_id,
             start_time="2026-01-01T09:00:00",
-            gas_system_state="VUOTO",
+            gas_operation="fill",
             gas_recharge=cyl_id,
-            gas_recharge_weight=12.0,
+            gas_measured_kg=12.0,
         )
         assert response.status_code == 400
         assert db.session.get(GasCylinder, cyl_id).remaining_weight == 10.0
@@ -825,218 +870,418 @@ class TestTimerHandoff:
         assert detail["work_log"][0]["end_time"] is None
 
 
-# --- 5.5 gas recharge ----------------------------------------------------------
+# --- 5.5 gas operations --------------------------------------------------------
 
-class TestGasRecharge:
-    def test_recharge_decreases_balance(self, client, db):
+class TestGasOperations:
+    def test_fill_decreases_balance(self, client, db):
+        _install_refrigerator(db, gas_kg=3.0)
         cyl_id = _cylinder(db, remaining=10.0)
         repair_id = _create_repair(client).get_json()["id"]
-        response = client.post(
-            f"/api/v1/repairs/{repair_id}/work-log",
-            json={
-                "operator": "FABRI",
-                "gas_system_state": "VUOTO",
-                "gas_recharge": cyl_id,
-                "gas_recharge_weight": 2.5,
-            },
+        response = _add_log(
+            client,
+            repair_id,
+            gas_operation="fill",
+            gas_recharge=cyl_id,
+            gas_measured_kg=2.5,
         )
         assert response.status_code == 201
+        payload = response.get_json()
+        assert payload["gas_operation"] == "fill"
+        assert payload["gas_measured_kg"] == 2.5
+        assert payload["recharged_weight"] == 2.5
+        assert payload["recovered_weight"] is None
         assert db.session.get(GasCylinder, cyl_id).remaining_weight == 7.5
 
-    def test_full_system_stores_no_gas_data(self, client, db):
+    def test_none_is_ordinary_work(self, client, db):
         repair_id = _create_repair(client).get_json()["id"]
-        entry = client.post(
-            f"/api/v1/repairs/{repair_id}/work-log",
-            json={
-                "operator": "FABRI","gas_system_state": "PIENO"},
-        ).get_json()
+        entry = _add_log(client, repair_id, gas_operation="none").get_json()
+        assert entry["gas_operation"] is None
         assert entry["gas_recharge"] is None
-        assert entry["gas_recharge_weight"] is None
-
-    def test_ricupero_ricarica_applies_net(self, client, db):
-        cyl_id = _cylinder(db, remaining=10.0)
-        repair_id = _create_repair(client).get_json()["id"]
-        response = client.post(
-            f"/api/v1/repairs/{repair_id}/work-log",
-            json={
-                "operator": "FABRI",
-                "gas_system_state": "RICUPERO_RICARICA",
-                "gas_recharge": cyl_id,
-                "gas_recharge_weight": 2.5,
-                "gas_recovered_weight": 1.0,
-            },
-        )
-        assert response.status_code == 201
-        assert response.get_json()["gas_recovered_weight"] == 1.0
-        assert db.session.get(GasCylinder, cyl_id).remaining_weight == 8.5
+        assert entry["gas_measured_kg"] is None
 
     def test_recovery_increases_balance(self, client, db):
+        _install_refrigerator(db)
         cyl_id = _cylinder(db, remaining=4.0)
         repair_id = _create_repair(client).get_json()["id"]
-        response = client.post(
-            f"/api/v1/repairs/{repair_id}/work-log",
-            json={
-                "operator": "FABRI",
-                "gas_system_state": "RECUPERO",
-                "gas_recharge": cyl_id,
-                "gas_recovered_weight": 1.0,
-            },
+        response = _add_log(
+            client,
+            repair_id,
+            gas_operation="recovery",
+            gas_recharge=cyl_id,
+            gas_measured_kg=1.0,
         )
         assert response.status_code == 201
+        payload = response.get_json()
+        assert payload["recovered_weight"] == 1.0
+        assert payload["recharged_weight"] is None
         assert db.session.get(GasCylinder, cyl_id).remaining_weight == 5.0
 
-    def test_overdraw_rejected_balance_unchanged(self, client, db):
+    def test_combined_uses_one_net_measurement(self, client, db):
+        _install_refrigerator(db, gas_kg=3.0)
+        cyl_id = _cylinder(db, remaining=10.0)
+        repair_id = _create_repair(client).get_json()["id"]
+        response = _add_log(
+            client,
+            repair_id,
+            gas_operation="recovery_recharge",
+            gas_recharge=cyl_id,
+            gas_measured_kg=0.4,
+        )
+        assert response.status_code == 201
+        payload = response.get_json()
+        assert payload["gas_measured_kg"] == 0.4
+        assert payload["gas_nameplate_kg"] == 3.0
+        assert payload["recharged_weight"] == 3.0
+        assert payload["recovered_weight"] == 2.6
+        assert db.session.get(GasCylinder, cyl_id).remaining_weight == 9.6
+
+    def test_combined_accepts_zero_net(self, client, db):
+        _install_refrigerator(db, gas_kg=3.0)
+        cyl_id = _cylinder(db, remaining=10.0)
+        repair_id = _create_repair(client).get_json()["id"]
+        response = _add_log(
+            client,
+            repair_id,
+            gas_operation="recovery_recharge",
+            gas_recharge=cyl_id,
+            gas_measured_kg=0,
+        )
+        assert response.status_code == 201
+        payload = response.get_json()
+        assert payload["recovered_weight"] == 3.0
+        assert db.session.get(GasCylinder, cyl_id).remaining_weight == 10.0
+
+    def test_combined_accepts_full_nameplate(self, client, db):
+        _install_refrigerator(db, gas_kg=3.0)
+        cyl_id = _cylinder(db, remaining=10.0)
+        repair_id = _create_repair(client).get_json()["id"]
+        response = _add_log(
+            client,
+            repair_id,
+            gas_operation="recovery_recharge",
+            gas_recharge=cyl_id,
+            gas_measured_kg=3.0,
+        )
+        assert response.status_code == 201
+        assert response.get_json()["recovered_weight"] == 0.0
+        assert db.session.get(GasCylinder, cyl_id).remaining_weight == 7.0
+
+    def test_gas_data_without_operation_rejected(self, client, db):
+        _install_refrigerator(db)
         cyl_id = _cylinder(db, remaining=10.0)
         repair_id = _create_repair(client).get_json()["id"]
         response = client.post(
             f"/api/v1/repairs/{repair_id}/work-log",
-            json={
-                "operator": "FABRI","gas_system_state": "VUOTO", "gas_recharge": cyl_id, "gas_recharge_weight": 12.0},
+            json={"operator": "FABRI", "gas_recharge": cyl_id, "gas_measured_kg": 1.0},
+        )
+        assert response.status_code == 400
+        assert db.session.get(GasCylinder, cyl_id).remaining_weight == 10.0
+        assert client.get(f"/api/v1/repairs/{repair_id}").get_json()["work_log"] == []
+
+    def test_legacy_payload_rejected(self, client, db):
+        """The retired gas-state payload is rejected, not silently ignored."""
+        repair_id = _create_repair(client).get_json()["id"]
+        response = client.post(
+            f"/api/v1/repairs/{repair_id}/work-log",
+            json={"operator": "FABRI", "gas_system_state": "VUOTO", "gas_recharge_weight": 1.0},
+        )
+        assert response.status_code == 400
+
+    def test_overdraw_rejected_balance_unchanged(self, client, db):
+        _install_refrigerator(db, gas_kg=20.0)
+        cyl_id = _cylinder(db, remaining=10.0)
+        repair_id = _create_repair(client).get_json()["id"]
+        response = _add_log(
+            client,
+            repair_id,
+            gas_operation="fill",
+            gas_recharge=cyl_id,
+            gas_measured_kg=12.0,
         )
         assert response.status_code == 400
         assert db.session.get(GasCylinder, cyl_id).remaining_weight == 10.0
         detail = client.get(f"/api/v1/repairs/{repair_id}").get_json()
-        assert detail["work_log"] == []
+        assert detail["gas_equipment_locked"] is False
 
-    def test_recharge_without_cylinder_400(self, client, db):
+    def test_fill_above_nameplate_rejected(self, client, db):
+        _install_refrigerator(db, gas_kg=3.0)
+        cyl_id = _cylinder(db, remaining=10.0)
         repair_id = _create_repair(client).get_json()["id"]
-        response = client.post(
-            f"/api/v1/repairs/{repair_id}/work-log",
-            json={
-                "operator": "FABRI","gas_system_state": "VUOTO", "gas_recharge_weight": 1.0},
+        response = _add_log(
+            client,
+            repair_id,
+            gas_operation="fill",
+            gas_recharge=cyl_id,
+            gas_measured_kg=3.5,
         )
         assert response.status_code == 400
 
-    def test_recovery_only_entry_accepted(self, client, db):
-        cyl_id = _cylinder(db, remaining=10.0)
+    def test_fill_without_cylinder_rejected(self, client, db):
+        _install_refrigerator(db)
         repair_id = _create_repair(client).get_json()["id"]
-        response = client.post(
-            f"/api/v1/repairs/{repair_id}/work-log",
-            json={
-                "operator": "FABRI",
-                "gas_system_state": "RECUPERO",
-                "gas_recharge": cyl_id,
-                "gas_recovered_weight": 1.0,
-            },
-        )
-        assert response.status_code == 201
-        payload = response.get_json()
-        assert payload["gas_recovered_weight"] == 1.0
-        assert payload["gas_recharge_weight"] is None
-
-    def test_recovery_with_recharge_weight_rejected(self, client, db):
-        cyl_id = _cylinder(db, remaining=10.0)
-        repair_id = _create_repair(client).get_json()["id"]
-        response = client.post(
-            f"/api/v1/repairs/{repair_id}/work-log",
-            json={
-                "operator": "FABRI",
-                "gas_system_state": "RECUPERO",
-                "gas_recharge": cyl_id,
-                "gas_recharge_weight": 1.0,
-                "gas_recovered_weight": 1.0,
-            },
-        )
-        assert response.status_code == 400
-
-    def test_ricupero_ricarica_requires_recovered(self, client, db):
-        cyl_id = _cylinder(db, remaining=10.0)
-        repair_id = _create_repair(client).get_json()["id"]
-        response = client.post(
-            f"/api/v1/repairs/{repair_id}/work-log",
-            json={
-                "operator": "FABRI",
-                "gas_system_state": "RICUPERO_RICARICA",
-                "gas_recharge": cyl_id,
-                "gas_recharge_weight": 1.0,
-            },
-        )
-        assert response.status_code == 400
-
-    def test_vuoto_with_recovered_rejected(self, client, db):
-        cyl_id = _cylinder(db, remaining=10.0)
-        repair_id = _create_repair(client).get_json()["id"]
-        response = client.post(
-            f"/api/v1/repairs/{repair_id}/work-log",
-            json={
-                "operator": "FABRI",
-                "gas_system_state": "VUOTO",
-                "gas_recharge": cyl_id,
-                "gas_recharge_weight": 1.0,
-                "gas_recovered_weight": 1.0,
-            },
+        response = _add_log(
+            client, repair_id, gas_operation="fill", gas_measured_kg=1.0
         )
         assert response.status_code == 400
 
     def test_overfill_rejected_balance_unchanged(self, client, db):
+        _install_refrigerator(db, gas_kg=20.0)
         cyl_id = _cylinder(db, remaining=19.0)
         repair_id = _create_repair(client).get_json()["id"]
-        response = client.post(
-            f"/api/v1/repairs/{repair_id}/work-log",
-            json={
-                "operator": "FABRI",
-                "gas_system_state": "RECUPERO",
-                "gas_recharge": cyl_id,
-                "gas_recovered_weight": 2.0,
-            },
+        response = _add_log(
+            client,
+            repair_id,
+            gas_operation="recovery",
+            gas_recharge=cyl_id,
+            gas_measured_kg=2.0,
         )
         assert response.status_code == 400
         assert db.session.get(GasCylinder, cyl_id).remaining_weight == 19.0
 
-    def test_gas_data_without_state_rejected(self, client, db):
-        cyl_id = _cylinder(db, remaining=10.0)
+    def test_gas_type_mismatch_rejected(self, client, db):
+        _install_refrigerator(db, gas_kind="R32")
+        cyl_id = _cylinder(db, remaining=10.0, gas_kind="R410A")
         repair_id = _create_repair(client).get_json()["id"]
-        response = client.post(
-            f"/api/v1/repairs/{repair_id}/work-log",
-            json={
-                "operator": "FABRI","gas_recharge": cyl_id, "gas_recharge_weight": 1.0},
+        response = _add_log(
+            client,
+            repair_id,
+            gas_operation="fill",
+            gas_recharge=cyl_id,
+            gas_measured_kg=1.0,
         )
         assert response.status_code == 400
-        # The balance is untouched and no entry was created.
-        assert db.session.get(GasCylinder, cyl_id).remaining_weight == 10.0
-        detail = client.get(f"/api/v1/repairs/{repair_id}").get_json()
-        assert detail["work_log"] == []
+        assert "gas type" in response.get_json()["error"]
 
     def test_balance_restored_on_delete(self, client, db):
+        _install_refrigerator(db)
         cyl_id = _cylinder(db, remaining=10.0)
         repair_id = _create_repair(client).get_json()["id"]
-        entry_id = client.post(
-            f"/api/v1/repairs/{repair_id}/work-log",
-            json={
-                "operator": "FABRI","gas_system_state": "VUOTO", "gas_recharge": cyl_id, "gas_recharge_weight": 2.5},
+        entry_id = _add_log(
+            client,
+            repair_id,
+            gas_operation="fill",
+            gas_recharge=cyl_id,
+            gas_measured_kg=2.5,
         ).get_json()["id"]
         assert db.session.get(GasCylinder, cyl_id).remaining_weight == 7.5
         client.delete(f"/api/v1/repairs/{repair_id}/work-log/{entry_id}")
         assert db.session.get(GasCylinder, cyl_id).remaining_weight == 10.0
 
-    def test_delete_reverses_recovery_and_recharge(self, client, db):
+    def test_delete_reverses_combined_net(self, client, db):
+        _install_refrigerator(db, gas_kg=3.0)
         cyl_id = _cylinder(db, remaining=10.0)
         repair_id = _create_repair(client).get_json()["id"]
-        entry_id = client.post(
-            f"/api/v1/repairs/{repair_id}/work-log",
-            json={
-                "operator": "FABRI",
-                "gas_system_state": "RICUPERO_RICARICA",
-                "gas_recharge": cyl_id,
-                "gas_recharge_weight": 2.5,
-                "gas_recovered_weight": 1.0,
-            },
+        entry_id = _add_log(
+            client,
+            repair_id,
+            gas_operation="recovery_recharge",
+            gas_recharge=cyl_id,
+            gas_measured_kg=0.4,
         ).get_json()["id"]
-        assert db.session.get(GasCylinder, cyl_id).remaining_weight == 8.5
+        assert db.session.get(GasCylinder, cyl_id).remaining_weight == 9.6
         client.delete(f"/api/v1/repairs/{repair_id}/work-log/{entry_id}")
         assert db.session.get(GasCylinder, cyl_id).remaining_weight == 10.0
 
     def test_repair_delete_restores_balance(self, client, db):
+        _install_refrigerator(db)
         cyl_id = _cylinder(db, remaining=10.0)
         repair_id = _create_repair(client).get_json()["id"]
-        client.post(
-            f"/api/v1/repairs/{repair_id}/work-log",
-            json={
-                "operator": "FABRI","gas_system_state": "VUOTO", "gas_recharge": cyl_id, "gas_recharge_weight": 2.5},
+        _add_log(
+            client,
+            repair_id,
+            gas_operation="fill",
+            gas_recharge=cyl_id,
+            gas_measured_kg=2.5,
         )
         assert db.session.get(GasCylinder, cyl_id).remaining_weight == 7.5
         client.delete(f"/api/v1/repairs/{repair_id}")
         assert db.session.get(GasCylinder, cyl_id).remaining_weight == 10.0
+
+    def test_edit_replaces_dataset_and_reverses(self, client, db):
+        _install_refrigerator(db, gas_kg=3.0)
+        cyl_id = _cylinder(db, remaining=10.0)
+        repair_id = _create_repair(client).get_json()["id"]
+        entry_id = _add_log(
+            client,
+            repair_id,
+            gas_operation="fill",
+            gas_recharge=cyl_id,
+            gas_measured_kg=2.0,
+        ).get_json()["id"]
+        assert db.session.get(GasCylinder, cyl_id).remaining_weight == 8.0
+
+        response = client.put(
+            f"/api/v1/repairs/{repair_id}/work-log/{entry_id}",
+            json={"gas_operation": "fill", "gas_recharge": cyl_id, "gas_measured_kg": 1.0},
+        )
+        assert response.status_code == 200
+        assert db.session.get(GasCylinder, cyl_id).remaining_weight == 9.0
+
+    def test_explicit_none_reverses_the_movement(self, client, db):
+        _install_refrigerator(db)
+        cyl_id = _cylinder(db, remaining=10.0)
+        repair_id = _create_repair(client).get_json()["id"]
+        entry_id = _add_log(
+            client,
+            repair_id,
+            gas_operation="fill",
+            gas_recharge=cyl_id,
+            gas_measured_kg=2.0,
+        ).get_json()["id"]
+        assert db.session.get(GasCylinder, cyl_id).remaining_weight == 8.0
+
+        response = client.put(
+            f"/api/v1/repairs/{repair_id}/work-log/{entry_id}",
+            json={"gas_operation": "none"},
+        )
+        assert response.status_code == 200
+        assert response.get_json()["gas_operation"] is None
+        assert db.session.get(GasCylinder, cyl_id).remaining_weight == 10.0
+
+    def test_metadata_edit_leaves_gas_unchanged(self, client, db):
+        _install_refrigerator(db)
+        cyl_id = _cylinder(db, remaining=10.0)
+        repair_id = _create_repair(client).get_json()["id"]
+        entry_id = _add_log(
+            client,
+            repair_id,
+            gas_operation="fill",
+            gas_recharge=cyl_id,
+            gas_measured_kg=2.0,
+        ).get_json()["id"]
+
+        response = client.put(
+            f"/api/v1/repairs/{repair_id}/work-log/{entry_id}",
+            json={"description": "Filtro"},
+        )
+        assert response.status_code == 200
+        payload = response.get_json()
+        assert payload["description"] == "Filtro"
+        assert payload["gas_operation"] == "fill"
+        assert db.session.get(GasCylinder, cyl_id).remaining_weight == 8.0
+
+    def test_nameplate_edit_does_not_change_history(self, client, db):
+        fridge_id = _install_refrigerator(db, gas_kg=3.0)
+        cyl_id = _cylinder(db, remaining=10.0)
+        repair_id = _create_repair(client).get_json()["id"]
+        entry_id = _add_log(
+            client,
+            repair_id,
+            gas_operation="recovery_recharge",
+            gas_recharge=cyl_id,
+            gas_measured_kg=0.4,
+        ).get_json()["id"]
+
+        client.put(f"/api/v1/refrigerators/{fridge_id}", json={"gas_kg": 5.0})
+
+        detail = client.get(f"/api/v1/repairs/{repair_id}").get_json()
+        entry = next(item for item in detail["work_log"] if item["id"] == entry_id)
+        assert entry["gas_nameplate_kg"] == 3.0
+        assert entry["recovered_weight"] == 2.6
+        # Reversing still uses the recorded nameplate.
+        client.delete(f"/api/v1/repairs/{repair_id}/work-log/{entry_id}")
+        assert db.session.get(GasCylinder, cyl_id).remaining_weight == 10.0
+
+
+class TestGasEquipmentLock:
+    def test_no_installation_blocks_gas_but_allows_ordinary(self, client, db):
+        repair_id = _create_repair(client).get_json()["id"]
+        assert _add_log(client, repair_id, gas_operation="none").status_code == 201
+        response = _add_log(
+            client, repair_id, gas_operation="recovery", gas_measured_kg=1.0
+        )
+        assert response.status_code == 400
+
+    def test_first_gas_operation_locks_the_unit(self, client, db):
+        fridge_id = _install_refrigerator(db)
+        cyl_id = _cylinder(db, remaining=10.0)
+        created = _create_repair(client).get_json()
+        assert created["gas_equipment_locked"] is False
+        assert created["refrigerator_installed"] is None
+
+        _add_log(
+            client,
+            created["id"],
+            gas_operation="recovery",
+            gas_recharge=cyl_id,
+            gas_measured_kg=1.0,
+        )
+        detail = client.get(f"/api/v1/repairs/{created['id']}").get_json()
+        assert detail["gas_equipment_locked"] is True
+        assert detail["refrigerator"] == fridge_id
+        assert detail["refrigerator_installed"] is True
+
+    def test_replacement_after_gas_work_requires_separate_repair(self, client, db):
+        first = _install_refrigerator(db, serial="A")
+        cyl_id = _cylinder(db, remaining=10.0)
+        repair_id = _create_repair(client).get_json()["id"]
+        _add_log(
+            client,
+            repair_id,
+            gas_operation="recovery",
+            gas_recharge=cyl_id,
+            gas_measured_kg=1.0,
+        )
+
+        # Install a different unit on the same allestimento.
+        replacement = db.session.get(Refrigerator, first)
+        replacement.allestimento_id = None
+        db.session.commit()
+        _install_refrigerator(db, serial="B")
+
+        response = _add_log(
+            client,
+            repair_id,
+            gas_operation="recovery",
+            gas_recharge=cyl_id,
+            gas_measured_kg=1.0,
+        )
+        assert response.status_code == 409
+        detail = client.get(f"/api/v1/repairs/{repair_id}").get_json()
+        assert detail["refrigerator"] == first
+        assert detail["refrigerator_installed"] is False
+
+    def test_stale_expected_refrigerator_rejected(self, client, db):
+        _install_refrigerator(db)
+        cyl_id = _cylinder(db, remaining=10.0)
+        repair_id = _create_repair(client).get_json()["id"]
+        response = _add_log(
+            client,
+            repair_id,
+            gas_operation="recovery",
+            gas_recharge=cyl_id,
+            gas_measured_kg=1.0,
+            expected_refrigerator=99999,
+        )
+        assert response.status_code == 409
+
+    def test_locked_vehicle_cannot_change(self, client, db):
+        _install_refrigerator(db)
+        db.session.add(
+            Vehicle(
+                ID_INT=2,
+                ID="000000000000002",
+                NOMINATIVO_ID="NOM0000000000002",
+                TARGA="XYZ789",
+            )
+        )
+        db.session.commit()
+        cyl_id = _cylinder(db, remaining=10.0)
+        repair_id = _create_repair(client).get_json()["id"]
+        _add_log(
+            client,
+            repair_id,
+            gas_operation="recovery",
+            gas_recharge=cyl_id,
+            gas_measured_kg=1.0,
+        )
+
+        response = client.put(
+            f"/api/v1/repairs/{repair_id}", json={"vehicle": 2}
+        )
+        assert response.status_code == 409
+        detail = client.get(f"/api/v1/repairs/{repair_id}").get_json()
+        assert detail["vehicle"] == 1
 
 
 # --- Excel export --------------------------------------------------------------
@@ -1058,15 +1303,16 @@ class TestExport:
         assert sheet.cell(row=1, column=1).value == "id"
 
     def test_export_includes_gas_used_column(self, client, db):
+        _install_refrigerator(db)
         cyl_id = _cylinder(db, remaining=20.0)
         repair_id = _create_repair(client).get_json()["id"]
         client.post(
             f"/api/v1/repairs/{repair_id}/work-log",
             json={
                 "operator": "FABRI",
-                "gas_system_state": "VUOTO",
+                "gas_operation": "fill",
                 "gas_recharge": cyl_id,
-                "gas_recharge_weight": 2.5,
+                "gas_measured_kg": 2.5,
             },
         )
         response = client.get("/api/v1/repairs/export")
