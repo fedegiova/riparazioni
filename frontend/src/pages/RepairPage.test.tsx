@@ -269,6 +269,75 @@ describe('RepairPage', () => {
     )
   })
 
+  it('shows work-log descriptions', async () => {
+    getRepair.mockResolvedValue({
+      ...baseRepair,
+      work_log: [{ ...baseRepair.work_log[0], description: 'Filtro sostituito' }],
+    })
+    renderAt('/repairs/1')
+
+    expect(await screen.findByText('Filtro sostituito')).toBeTruthy()
+  })
+
+  it('hides work-log mutation controls on an archived repair', async () => {
+    getRepair.mockResolvedValue({
+      ...baseRepair,
+      end_data: '2026-11-09T10:00:00',
+      work_log: [
+        {
+          ...baseRepair.work_log[0],
+          end_time: null,
+          description: 'Lavoro in corso',
+        },
+      ],
+    })
+    renderAt('/repairs/1')
+
+    expect(await screen.findByText('Lavoro in corso')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Add work log' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Stop work log 10' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Edit work log 10' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Cancel work log 10' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Archived' })).toBeTruthy()
+  })
+
+  it('names the blocking timers when archiving fails, then retries after a stop', async () => {
+    getRepair.mockResolvedValue({
+      ...baseRepair,
+      work_log: [
+        {
+          id: 11,
+          start_time: '2026-11-01T09:00:00',
+          end_time: null,
+          operator: 'LORENZA',
+        },
+      ],
+    })
+    updateRepair.mockRejectedValueOnce(
+      new Error(
+        'repair has running work logs; stop them before archiving: #11 (LORENZA)',
+      ),
+    )
+    updateRepair.mockResolvedValue({
+      ...baseRepair,
+      end_data: '2026-11-09T10:00:00',
+    })
+    updateWorkLog.mockResolvedValue({ id: 11 })
+    renderAt('/repairs/1')
+
+    await screen.findByText('LORENZA')
+    fireEvent.click(screen.getByRole('button', { name: 'Archive repair' }))
+    expect(
+      await screen.findByText(/stop them before archiving.*#11.*LORENZA/),
+    ).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Stop work log 11' }))
+    await waitFor(() => expect(updateWorkLog).toHaveBeenCalled())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Archive repair' }))
+    await waitFor(() => expect(updateRepair).toHaveBeenCalledTimes(2))
+  })
+
   it('prefills the start date for a new repair', async () => {
     getRepair.mockResolvedValue(null)
     renderAt('/repairs/new')

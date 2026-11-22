@@ -213,8 +213,13 @@ class Repairs(db.Model):
     delivery_date = db.Column(db.Date)
     notes = db.Column(db.String(4000))
     refrigerator = db.Column(db.Integer, db.ForeignKey("REFRIGERATORS.id"))
+    # Frozen calendar-adjusted total, written once when the repair is archived.
+    # NULL while the repair is active (its total is computed on read) and after
+    # a reopen; the service layer reads it instead of recomputing when set.
+    archived_total_hours = db.Column(db.Float)
 
-    # Computed on read and attached by the service layer (never stored).
+    # Computed on read and attached by the service layer. `total_hours` is the
+    # frozen snapshot for an archived repair, else the live adjusted total.
     customer_name = None
     total_hours = 0.0
     gas_used = 0.0
@@ -264,6 +269,7 @@ class RepairWorkLog(db.Model):
     start_time = db.Column(db.DateTime)
     end_time = db.Column(db.DateTime)
     operator = db.Column(db.String(32))
+    description = db.Column(db.String(4000))
     gas_system_state = db.Column(db.String(16))
     gas_recharge = db.Column(db.Integer, db.ForeignKey("GAS_CYLINDERS.id"))
     gas_recharge_weight = db.Column(db.Float)
@@ -278,6 +284,7 @@ class RepairWorkLog(db.Model):
             "start_time": self.start_time.isoformat() if self.start_time else None,
             "end_time": self.end_time.isoformat() if self.end_time else None,
             "operator": self.operator,
+            "description": self.description,
             "gas_system_state": self.gas_system_state,
             "gas_recharge": self.gas_recharge,
             "gas_recharge_weight": self.gas_recharge_weight,
@@ -323,3 +330,19 @@ class RepairPart(db.Model):
             "unit_price": self.unit_price,
             "part": self.part.to_dict() if self.part else None,
         }
+
+
+class TransactionGuard(db.Model):
+    """Singleton row serializing repair-lifecycle and timer mutations.
+
+    Every mutating request that could change a repair's archive state or an
+    operator's running timer updates row 1 before reading authoritative state.
+    The row update makes concurrent writers queue across processes, which a
+    process-local mutex cannot do. The row is seeded by the migration and
+    created lazily by the service so databases built from the metadata work too.
+    """
+
+    __tablename__ = "TRANSACTION_GUARDS"
+
+    id = db.Column(db.Integer, primary_key=True)
+    version = db.Column(db.Integer, nullable=False, default=0)

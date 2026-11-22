@@ -25,6 +25,9 @@ def register_error_handlers(bp: Blueprint) -> None:
 
     @bp.app_errorhandler(ApiError)
     def _handle_api_error(error: ApiError):
+        # A rejected request must not leave pending writes (notably the
+        # transaction guard) in the session for a later request to commit.
+        db.session.rollback()
         return jsonify(error=error.message), error.status_code
 
     @bp.app_errorhandler(IntegrityError)

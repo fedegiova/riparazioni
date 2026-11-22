@@ -13,6 +13,7 @@ from app.models import (
     RepairWorkLog,
     ServicePart,
     Settings,
+    TransactionGuard,
     Vehicle,
 )
 
@@ -29,6 +30,7 @@ def test_owned_models_are_registered(app):
         ServicePart: "SERVICE_PARTS",
         Picture: "PICTURES",
         Settings: "SETTINGS",
+        TransactionGuard: "TRANSACTION_GUARDS",
     }
     for model, table_name in expected_tables.items():
         assert model.__tablename__ == table_name, model

@@ -56,7 +56,7 @@ def db(app):
     """
     from app import models  # noqa: F401  (register mappings on the metadata)
     from app.extensions import db as dbext
-    from app.models import AppUser, Customer, Vehicle
+    from app.models import AppUser, Customer, TransactionGuard, Vehicle
 
     @event.listens_for(dbext.engine, "connect")
     def _setup_connection(dbapi_connection, connection_record):
@@ -93,6 +93,7 @@ def db(app):
         EMAIL="ACME@EXAMPLE.COM",
     )
     user = AppUser(ID_INT=1, ID="000000000000001", NAME="OPERATOR", PASSWORD="hash")
-    dbext.session.add_all([vehicle, customer, user])
+    guard = TransactionGuard(id=1, version=0)
+    dbext.session.add_all([vehicle, customer, user, guard])
     dbext.session.commit()
     yield dbext

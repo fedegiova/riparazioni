@@ -32,7 +32,7 @@ def test_ripa_frigo_full_workflow(client, db):
         json={
             "start_time": "2026-10-08T08:00:00",
             "end_time": "2026-10-08T10:30:00",
-            "operator": "Marco",
+            "operator": "FABRI",
             "gas_system_state": "VUOTO",
             "gas_recharge": cyl_id,
             "gas_recharge_weight": 2.5,

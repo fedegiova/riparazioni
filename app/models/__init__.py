@@ -18,6 +18,7 @@ from app.models.owned import (
     RepairWorkLog,
     ServicePart,
     Settings,
+    TransactionGuard,
 )
 
 __all__ = [
@@ -33,5 +34,6 @@ __all__ = [
     "Repairs",
     "ServicePart",
     "Settings",
+    "TransactionGuard",
     "Vehicle",
 ]

@@ -17,7 +17,7 @@ vi.mock('../api/equipment', () => ({ listGasCylinders }))
 vi.mock('../api/settings', () => ({ getOperators }))
 
 beforeEach(() => {
-  getOperators.mockResolvedValue([])
+  getOperators.mockResolvedValue(['FABRI', 'CLAUDIO', 'MARIO', 'LUIGI'])
 })
 
 afterEach(() => {
@@ -38,6 +38,7 @@ const baseRepair = {
       start_time: '2026-11-01T09:00:00',
       end_time: '2026-11-01T10:00:00',
       operator: 'LORENZA',
+      description: null,
     },
   ],
 }
@@ -56,14 +57,19 @@ function renderAt(path: string) {
   )
 }
 
+async function chooseOperator(name: string) {
+  const select = await screen.findByRole('combobox', { name: 'Operator' })
+  fireEvent.mouseDown(select)
+  fireEvent.click(await screen.findByRole('option', { name }))
+}
+
 describe('WorkLogPage', () => {
   it('updates the entry time and operator', async () => {
     getRepair.mockResolvedValue(baseRepair)
     updateWorkLog.mockResolvedValue({ id: 10 })
     renderAt('/repairs/1/work-log/10')
 
-    const operator = await screen.findByDisplayValue('LORENZA')
-    fireEvent.change(operator, { target: { value: 'MARIO' } })
+    await chooseOperator('MARIO')
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() => expect(updateWorkLog).toHaveBeenCalled())
@@ -108,9 +114,7 @@ describe('WorkLogPage', () => {
     updateWorkLog.mockResolvedValue({ id: 10 })
     renderAt('/repairs/1/work-log/10')
 
-    const select = await screen.findByRole('combobox', { name: 'Operator' })
-    fireEvent.mouseDown(select)
-    fireEvent.click(await screen.findByRole('option', { name: 'MARIO' }))
+    await chooseOperator('MARIO')
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() => expect(updateWorkLog).toHaveBeenCalled())
@@ -128,19 +132,59 @@ describe('WorkLogPage', () => {
     expect(await screen.findByRole('option', { name: 'LORENZA' })).toBeTruthy()
   })
 
-  it('keeps the operator optional', async () => {
+  it('keeps the operator optional when editing an existing entry', async () => {
     getRepair.mockResolvedValue(baseRepair)
     getOperators.mockResolvedValue(['MARIO'])
     updateWorkLog.mockResolvedValue({ id: 10 })
     renderAt('/repairs/1/work-log/10')
 
-    const select = await screen.findByRole('combobox', { name: 'Operator' })
-    fireEvent.mouseDown(select)
-    fireEvent.click(await screen.findByRole('option', { name: 'None' }))
+    await chooseOperator('None')
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() => expect(updateWorkLog).toHaveBeenCalled())
     expect(updateWorkLog.mock.calls[0][2].operator).toBeUndefined()
+  })
+
+  it('prefills the description and submits changes', async () => {
+    getRepair.mockResolvedValue({
+      ...baseRepair,
+      work_log: [{ ...baseRepair.work_log[0], description: 'Filtro' }],
+    })
+    updateWorkLog.mockResolvedValue({ id: 10 })
+    renderAt('/repairs/1/work-log/10')
+
+    const description = await screen.findByDisplayValue('Filtro')
+    fireEvent.change(description, { target: { value: 'Filtro e guarnizione' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(updateWorkLog).toHaveBeenCalled())
+    expect(updateWorkLog.mock.calls[0][2]).toMatchObject({
+      description: 'Filtro e guarnizione',
+    })
+  })
+
+  it('requires an operator before creating an entry', async () => {
+    getRepair.mockResolvedValue(baseRepair)
+    renderAt('/repairs/1/work-log/new')
+
+    const save = (await screen.findByRole('button', {
+      name: 'Save',
+    })) as HTMLButtonElement
+    expect(save.disabled).toBe(true)
+
+    await chooseOperator('FABRI')
+    expect(save.disabled).toBe(false)
+  })
+
+  it('explains when no operators are configured for a new entry', async () => {
+    getRepair.mockResolvedValue(baseRepair)
+    getOperators.mockResolvedValue([])
+    renderAt('/repairs/1/work-log/new')
+
+    expect(await screen.findByText(/No operators are configured/)).toBeTruthy()
+    const save = screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement
+    expect(save.disabled).toBe(true)
+    expect(screen.queryByRole('textbox', { name: 'Operator' })).toBeNull()
   })
 
   it('captures a gas recharge on a new entry', async () => {
@@ -150,6 +194,7 @@ describe('WorkLogPage', () => {
     renderAt('/repairs/1/work-log/new')
 
     await screen.findByText('New work log')
+    await chooseOperator('FABRI')
     fireEvent.click(screen.getByRole('button', { name: 'Add gas recharge' }))
 
     fireEvent.mouseDown(
@@ -168,6 +213,7 @@ describe('WorkLogPage', () => {
 
     await waitFor(() => expect(addWorkLog).toHaveBeenCalled())
     expect(addWorkLog.mock.calls[0][1]).toMatchObject({
+      operator: 'FABRI',
       gas_system_state: 'VUOTO',
       gas_recharge: 7,
       gas_recharge_weight: 2.5,

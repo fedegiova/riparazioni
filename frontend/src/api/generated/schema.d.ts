@@ -1425,7 +1425,14 @@ export interface paths {
         put?: never;
         /**
          * Add a work-log entry
-         * @description Gas recharge rules:
+         * @description Creates a work log. `operator` is required and must be one of the
+         *     configured operators. When `start_time` is given without `end_time`, a
+         *     running entry is created and any running entry for the same operator on
+         *     an active repair is stopped at this start time. Recording a completed
+         *     historical entry does not stop a timer. Archived repairs are read-only
+         *     (409) until reopened.
+         *
+         *     Gas recharge rules:
          *
          *     - a recharge needs both `gas_recharge` (cylinder id) and `gas_recharge_weight`;
          *       one without the other is rejected (400);
@@ -1448,7 +1455,7 @@ export interface paths {
             };
             requestBody: {
                 content: {
-                    "application/json": components["schemas"]["WorkLogInput"];
+                    "application/json": components["schemas"]["WorkLogCreate"];
                 };
             };
             responses: {
@@ -1922,7 +1929,13 @@ export interface components {
              * @description Delivery date requested by the customer
              */
             delivery_date?: string | null;
-            /** @description Sum of the repair's work-log durations, in hours */
+            /**
+             * @description Worked hours. While the repair is active this is computed from its
+             *     completed work-log entries: only the time falling inside the
+             *     configured weekday working hours and outside configured holiday
+             *     ranges counts. Archiving freezes the value; later calendar edits do
+             *     not change an archived repair until it is reopened.
+             */
             total_hours: number;
             /** @description Sum of the recharged weights recorded on the repair's work-log entries, in kg */
             gas_used?: number;
@@ -1962,7 +1975,10 @@ export interface components {
             notes?: string;
             /**
              * Format: date-time
-             * @description Set to complete the repair, null to reopen it
+             * @description Set to archive the repair, null to reopen it. Archiving fails with
+             *     409 while a work log is still running: stop the timers first. A
+             *     successful archive freezes `total_hours`; reopening makes it live
+             *     again and the next archive stores a new total.
              */
             end_data?: string | null;
             /**
@@ -1980,6 +1996,8 @@ export interface components {
             /** Format: date-time */
             end_time?: string | null;
             operator?: string | null;
+            /** @description Free-text note about the work performed */
+            description?: string | null;
             /**
              * @description Gas system state of the operation
              * @enum {string|null}
@@ -1993,8 +2011,31 @@ export interface components {
             gas_recovered_weight?: number | null;
         };
         /**
-         * @description Work-log fields. For POST all fields are optional. For PUT, if any gas field
-         *     is present the whole gas dataset (state, cylinder, weights) is replaced.
+         * @description Create a running or historical work log. `operator` must be one of the
+         *     configured operators; an unknown or omitted operator is rejected (400).
+         *     A running entry (start time, no end time) stops the same operator's
+         *     previously running entry at this start time.
+         */
+        WorkLogCreate: {
+            /** Format: date-time */
+            start_time?: string;
+            /** Format: date-time */
+            end_time?: string;
+            /** @description A configured operator name */
+            operator: string;
+            description?: string | null;
+            /** @enum {string|null} */
+            gas_system_state?: "VUOTO" | "PIENO" | "RECUPERO" | "RICUPERO_RICARICA" | null;
+            gas_recharge?: number | null;
+            gas_recharge_weight?: number | null;
+            gas_recovered_weight?: number | null;
+        };
+        /**
+         * @description Partial update of a work log. Every field is optional; non-gas fields are
+         *     patched individually. If any gas field is present the whole gas dataset
+         *     (state, cylinder, weights) is replaced. An omitted operator keeps the
+         *     stored one; a changed operator must be configured. Archived repairs are
+         *     read-only (409) until reopened.
          */
         WorkLogInput: {
             /** Format: date-time */
@@ -2002,6 +2043,7 @@ export interface components {
             /** Format: date-time */
             end_time?: string;
             operator?: string;
+            description?: string | null;
             /** @enum {string|null} */
             gas_system_state?: "VUOTO" | "PIENO" | "RECUPERO" | "RICUPERO_RICARICA" | null;
             gas_recharge?: number | null;

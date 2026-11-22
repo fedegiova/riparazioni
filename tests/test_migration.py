@@ -27,6 +27,7 @@ OWNED_TABLES = {
     "REPAIR_PARTS",
     "REPAIR_WORK_LOG",
     "SETTINGS",
+    "TRANSACTION_GUARDS",
 }
 EXTERNAL_TABLES = {"TBALLESTIMENTI", "TBUSERS", "VICLIENTI"}
 
@@ -61,7 +62,18 @@ def test_migration_upgrade_and_downgrade(tmp_path):
         # Schema delta: delivery_date replaces the removed type column.
         columns = {column["name"] for column in inspector.get_columns("REPAIRS")}
         assert "delivery_date" in columns, columns
+        assert "archived_total_hours" in columns, columns
         assert "type" not in columns, columns
+
+        work_log_columns = {
+            column["name"] for column in inspector.get_columns("REPAIR_WORK_LOG")
+        }
+        assert "description" in work_log_columns, work_log_columns
+
+        guard_rows = db.session.execute(
+            sa.text("SELECT id, version FROM TRANSACTION_GUARDS")
+        ).all()
+        assert guard_rows == [(1, 0)]
 
         # Schema delta: cylinders gain the archive flag and a required weight.
         cylinder_columns = {
@@ -97,3 +109,98 @@ def test_migration_upgrade_and_downgrade(tmp_path):
         inspector = sa.inspect(db.engine)
         tables = set(inspector.get_table_names())
         assert not (tables & OWNED_TABLES), f"tables still present: {tables & OWNED_TABLES}"
+
+
+def test_archived_totals_are_backfilled_with_the_old_elapsed_sum(tmp_path):
+    """Repairs archived before rollout keep the totals they reported."""
+    db_path = tmp_path / "backfill.sqlite"
+    app = _create_test_app(tmp_path)
+    app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{db_path}"
+    app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {}
+
+    with app.app_context():
+        from app.extensions import db
+
+        cfg = Config(str(PROJECT_ROOT / "migrations" / "alembic.ini"))
+        cfg.set_main_option("script_location", str(PROJECT_ROOT / "migrations"))
+        command.upgrade(cfg, "a3f1c7e29b04")
+
+        repairs = sa.table(
+            "REPAIRS",
+            sa.column("id", sa.Integer),
+            sa.column("customer", sa.Integer),
+            sa.column("vehicle", sa.Integer),
+            sa.column("end_data", sa.DateTime),
+        )
+        logs = sa.table(
+            "REPAIR_WORK_LOG",
+            sa.column("id", sa.Integer),
+            sa.column("id_repairs", sa.Integer),
+            sa.column("start_time", sa.DateTime),
+            sa.column("end_time", sa.DateTime),
+            sa.column("operator", sa.String),
+        )
+        from datetime import datetime
+
+        with db.engine.begin() as conn:
+            conn.execute(
+                sa.insert(repairs),
+                [
+                    {
+                        "id": 1,
+                        "customer": 1,
+                        "vehicle": 1,
+                        "end_data": datetime(2026, 1, 2, 10, 0),
+                    },
+                    {"id": 2, "customer": 1, "vehicle": 1, "end_data": None},
+                ],
+            )
+            conn.execute(
+                sa.insert(logs),
+                [
+                    {
+                        "id": 1,
+                        "id_repairs": 1,
+                        "start_time": datetime(2026, 1, 1, 8, 0),
+                        "end_time": datetime(2026, 1, 1, 9, 30),
+                        "operator": "FABRI",
+                    },
+                    {
+                        "id": 2,
+                        "id_repairs": 1,
+                        "start_time": datetime(2026, 1, 1, 10, 0),
+                        "end_time": datetime(2026, 1, 1, 12, 0),
+                        "operator": "FABRI",
+                    },
+                    {
+                        "id": 3,
+                        "id_repairs": 1,
+                        "start_time": datetime(2026, 1, 1, 13, 0),
+                        "end_time": None,
+                        "operator": "FABRI",
+                    },
+                    {
+                        "id": 4,
+                        "id_repairs": 2,
+                        "start_time": datetime(2026, 1, 1, 8, 0),
+                        "end_time": datetime(2026, 1, 1, 9, 0),
+                        "operator": "FABRI",
+                    },
+                ],
+            )
+
+        command.upgrade(cfg, "head")
+
+        rows = dict(
+            db.session.execute(
+                sa.text("SELECT id, archived_total_hours FROM REPAIRS")
+            ).all()
+        )
+        assert rows[1] == 3.5  # 1h30 + 2h00; the open entry contributes zero
+        assert rows[2] is None  # active repairs stay live
+
+        # Existing work logs are untouched: no description was invented.
+        descriptions = db.session.execute(
+            sa.text("SELECT description FROM REPAIR_WORK_LOG")
+        ).scalars().all()
+        assert descriptions == [None, None, None, None]

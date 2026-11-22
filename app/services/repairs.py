@@ -8,7 +8,8 @@ Owns the validation rules that the database cannot express:
   weight in the same transaction; deleting the entry restores it.
 
 Read-time computed fields (`total_hours`, `customer_name`) are attached to
-the repair instances before serialization; they are never stored.
+the repair instances before serialization. `total_hours` is stored only as the
+archive snapshot (`archived_total_hours`); active repairs always recompute it.
 
 Every mutating function follows validate-first semantics: all checks run
 (read-only) before the session is touched, so a rejected request (400/409)
@@ -33,6 +34,9 @@ from app.models import (
     Vehicle,
 )
 from app.services.errors import BadRequest, Conflict, NotFound
+from app.services.guard import acquire
+from app.services.settings import get_setting
+from app.services.working_time import Calendar, entry_hours
 
 # --- field parsing / validation (read-only) ------------------------------------
 
@@ -261,11 +265,92 @@ def _reverse_gas(entry: RepairWorkLog) -> None:
 
 # --- read-time computed fields ----------------------------------------------------
 
-def _duration_hours(entry: RepairWorkLog) -> float:
-    """Worked hours of one entry; entries missing a bound contribute zero."""
-    if entry.start_time is None or entry.end_time is None:
-        return 0.0
-    return (entry.end_time - entry.start_time).total_seconds() / 3600.0
+def _calendar() -> Calendar:
+    """Workshop calendar for one calculation batch.
+
+    Settings are read through the settings service, so an unwritten schedule
+    resolves to its default and a rejected write never affects this read.
+    """
+    return Calendar.from_settings(
+        get_setting("working_hours"), get_setting("holidays")
+    )
+
+
+def _running_entries(repair_id: int) -> list[RepairWorkLog]:
+    """Work logs that have begun and have no end time yet."""
+    return list(
+        db.session.execute(
+            db.select(RepairWorkLog)
+            .where(
+                RepairWorkLog.id_repairs == repair_id,
+                RepairWorkLog.start_time.is_not(None),
+                RepairWorkLog.end_time.is_(None),
+            )
+            .order_by(RepairWorkLog.id)
+        ).scalars()
+    )
+
+
+def _freeze_total(repair: Repairs) -> None:
+    """Store the calendar-adjusted total of a repair that is being archived."""
+    entries = db.session.execute(
+        db.select(RepairWorkLog).where(RepairWorkLog.id_repairs == repair.id)
+    ).scalars()
+    calendar = _calendar()
+    repair.archived_total_hours = sum(
+        entry_hours(entry.start_time, entry.end_time, calendar) for entry in entries
+    )
+
+
+def _ensure_archivable(repair: Repairs) -> None:
+    """Refuse to archive while a timer is still running."""
+    running = _running_entries(repair.id)
+    if not running:
+        return
+    labels = ", ".join(
+        f"#{entry.id}" + (f" ({entry.operator})" if entry.operator else "")
+        for entry in running
+    )
+    raise Conflict(
+        "repair has running work logs; stop them before archiving: " + labels
+    )
+
+
+def _ensure_active(repair: Repairs) -> None:
+    """Archived repairs are read-only until explicitly reopened."""
+    if repair.end_data is not None:
+        raise Conflict(
+            f"repair {repair.id} is archived; reopen it before changing its work log"
+        )
+
+
+def _handoff_operator_timer(operator: str, start) -> None:
+    """Stop the operator's running timers at *start* (same or other repairs).
+
+    Only running entries on active repairs are touched: an archived repair is
+    read-only, and a completed historical entry never stops a timer. Legacy
+    duplicates for the operator are closed at the same boundary. Backdating a
+    start before a running timer's own start would produce a negative interval,
+    so it is rejected and nothing is stopped.
+    """
+    rows = db.session.execute(
+        db.select(RepairWorkLog)
+        .join(Repairs, Repairs.id == RepairWorkLog.id_repairs)
+        .where(
+            RepairWorkLog.operator == operator,
+            RepairWorkLog.start_time.is_not(None),
+            RepairWorkLog.end_time.is_(None),
+            Repairs.end_data.is_(None),
+        )
+        .order_by(RepairWorkLog.id)
+    ).scalars().all()
+    for row in rows:
+        if row.start_time > start:
+            raise Conflict(
+                f"work log #{row.id} ({operator}) started at "
+                f"{row.start_time.isoformat()}; the new entry starts earlier"
+            )
+        row.end_time = start
 
 
 def _resolve_customer_names(customer_ids: set) -> dict:
@@ -282,20 +367,27 @@ def _resolve_customer_names(customer_ids: set) -> dict:
 def _decorate_repairs(repairs: list[Repairs]) -> None:
     """Attach computed fields to repairs before serialization.
 
-    A single query loads the work-log durations and recharged weights of every
+    A single query loads the work-log entries and recharged weights of every
     listed repair (no per-repair query); customer names are resolved for the
     distinct ids in one lookup. Unknown customer ids resolve to a null name.
+
+    `total_hours` is the live calendar-adjusted total for an active repair and
+    the stored snapshot for an archived one, so later calendar edits cannot
+    rewrite a finalized figure.
     """
     ids = [repair.id for repair in repairs]
     hours: dict[int, float] = {}
     gas: dict[int, float] = {}
     pictures: dict[int, list] = {}
+    calendar = _calendar()
     if ids:
         entries = db.session.execute(
             db.select(RepairWorkLog).where(RepairWorkLog.id_repairs.in_(ids))
         ).scalars()
         for entry in entries:
-            hours[entry.id_repairs] = hours.get(entry.id_repairs, 0.0) + _duration_hours(entry)
+            hours[entry.id_repairs] = hours.get(entry.id_repairs, 0.0) + entry_hours(
+                entry.start_time, entry.end_time, calendar
+            )
             gas[entry.id_repairs] = gas.get(entry.id_repairs, 0.0) + (
                 entry.gas_recharge_weight or 0.0
             )
@@ -308,7 +400,10 @@ def _decorate_repairs(repairs: list[Repairs]) -> None:
             pictures.setdefault(picture.owner_id, []).append(picture)
     names = _resolve_customer_names({repair.customer for repair in repairs})
     for repair in repairs:
-        repair.total_hours = hours.get(repair.id, 0.0)
+        if repair.end_data is not None and repair.archived_total_hours is not None:
+            repair.total_hours = repair.archived_total_hours
+        else:
+            repair.total_hours = hours.get(repair.id, 0.0)
         repair.gas_used = gas.get(repair.id, 0.0)
         repair.customer_name = names.get(repair.customer)
         repair.pictures = pictures.get(repair.id, [])
@@ -340,6 +435,10 @@ def create_repair(data: dict) -> Repairs:
 
     repair = Repairs()  # start_data uses the model default (now)
     _apply_repair_fields(repair, data)
+    if repair.end_data is not None:
+        # Created already closed: no work logs can exist yet, so the frozen
+        # total is zero until the repair is reopened and worked on.
+        repair.archived_total_hours = 0.0
     db.session.add(repair)
     db.session.flush()  # assign the id so part rows can reference it
     for item in parsed_parts:
@@ -387,6 +486,20 @@ def update_repair(repair: Repairs, data: dict) -> Repairs:
     _validate_repair_payload(data)
     parsed_parts = _validate_parts_payload(data["parts"]) if "parts" in data else None
 
+    acquire()
+    db.session.refresh(repair)
+
+    was_archived = repair.end_data is not None
+    if "end_data" in data:
+        new_end = _parse_datetime(data["end_data"], "end_data")
+        if new_end is not None and not was_archived:
+            _ensure_archivable(repair)
+            _freeze_total(repair)
+        elif new_end is None and was_archived:
+            # Reopening restores live calculation; the next archive freezes a
+            # new total from the calendar and logs in effect then.
+            repair.archived_total_hours = None
+
     _apply_repair_fields(repair, data)
     if parsed_parts is not None:
         for existing in list(repair.parts):
@@ -404,12 +517,54 @@ def delete_repair(repair: Repairs) -> None:
     restore must happen before that, since each deleted entry that moved gas
     must be undone on its cylinder (same transaction).
     """
+    acquire()
+    db.session.refresh(repair)
     for entry in repair.work_log:
         _reverse_gas(entry)
     db.session.delete(repair)
 
 
 # --- work log ------------------------------------------------------------------------
+
+def _configured_operators() -> list[str]:
+    """Operator names from settings; an unwritten setting uses its default."""
+    operators = get_setting("operators")
+    return operators if isinstance(operators, list) else []
+
+
+def _validate_new_operator(value) -> None:
+    """A new work log must name a configured operator."""
+    if not isinstance(value, str) or not value:
+        raise BadRequest("operator is required")
+    if value not in _configured_operators():
+        raise BadRequest(f"operator {value!r} is not configured")
+
+
+def _validate_operator_update(entry: RepairWorkLog, value) -> None:
+    """Allow an unchanged legacy operator; a change must be configured.
+
+    Legacy entries may carry an operator that is no longer in settings. Editing
+    such an entry without touching its operator stays possible; switching to a
+    different name requires one from the configured list.
+    """
+    if value in (None, ""):
+        return
+    if not isinstance(value, str):
+        raise BadRequest("operator must be a string")
+    if value == entry.operator:
+        return
+    if value not in _configured_operators():
+        raise BadRequest(f"operator {value!r} is not configured")
+
+
+def _validate_description(value) -> None:
+    if value is None:
+        return
+    if not isinstance(value, str):
+        raise BadRequest("description must be a string")
+    if len(value) > 4000:
+        raise BadRequest("description must be at most 4000 characters")
+
 
 def _apply_non_gas_fields(entry: RepairWorkLog, data: dict) -> None:
     if "start_time" in data:
@@ -418,6 +573,8 @@ def _apply_non_gas_fields(entry: RepairWorkLog, data: dict) -> None:
         entry.end_time = _parse_datetime(data["end_time"], "end_time")
     if "operator" in data:
         entry.operator = data["operator"]
+    if "description" in data:
+        entry.description = data["description"] or None
 
 
 def _gas_fields_present(data: dict) -> bool:
@@ -433,11 +590,19 @@ def _gas_fields_present(data: dict) -> bool:
 
 
 def add_work_log_entry(repair: Repairs, data: dict) -> RepairWorkLog:
+    acquire()
+    db.session.refresh(repair)
+    _ensure_active(repair)
+    _validate_new_operator(data.get("operator"))
+    _validate_description(data.get("description"))
+
     gas = _parse_work_log_gas(data)
     _validate_gas(None, gas["state"], gas["cylinder"], gas["weight"], gas["recovered"])
 
     entry = RepairWorkLog(id_repairs=repair.id)
     _apply_non_gas_fields(entry, data)
+    if entry.start_time is not None and entry.end_time is None:
+        _handoff_operator_timer(entry.operator, entry.start_time)
     _apply_gas(
         entry,
         gas["state"],
@@ -457,6 +622,16 @@ def get_work_log_entry(repair: Repairs, entry_id: int) -> RepairWorkLog:
 
 
 def update_work_log_entry(entry: RepairWorkLog, data: dict) -> RepairWorkLog:
+    acquire()
+    db.session.refresh(entry)
+    repair = entry.repair
+    db.session.refresh(repair)
+    _ensure_active(repair)
+    if "operator" in data:
+        _validate_operator_update(entry, data["operator"])
+    if "description" in data:
+        _validate_description(data["description"])
+
     gas = _parse_work_log_gas(data) if _gas_fields_present(data) else None
     if gas is not None:
         # Read-only validation first, against the entry's current values.
@@ -469,6 +644,11 @@ def update_work_log_entry(entry: RepairWorkLog, data: dict) -> RepairWorkLog:
 
 
 def delete_work_log_entry(entry: RepairWorkLog) -> None:
+    acquire()
+    db.session.refresh(entry)
+    repair = entry.repair
+    db.session.refresh(repair)
+    _ensure_active(repair)
     _reverse_gas(entry)
     db.session.delete(entry)
 

@@ -167,15 +167,27 @@ their minified view generated on first `/thumbnail` request.
   `start_date_to` (ISO 8601)
 - `POST /api/v1/repairs` — create; body: `type` (required), `customer`,
   `vehicle`, `refrigerator`, `start_data`, `notes`, `parts`
-- `GET /api/v1/repairs/<id>` — detail, includes `work_log`, `parts`, and the
-  computed `total_hours` and `gas_used` (sum of recharged weights)
-- `PUT /api/v1/repairs/<id>` — update; set `end_data` to complete, `null` to
-  reopen; `parts` (when present) replaces the full part set
+- `GET /api/v1/repairs/<id>` — detail, includes `work_log`, `parts`, and
+  `total_hours` (adjusted worked time, see below) plus `gas_used` (sum of
+  recharged weights)
+- `PUT /api/v1/repairs/<id>` — update; set `end_data` to archive, `null` to
+  reopen; `parts` (when present) replaces the full part set. Archiving is
+  rejected (409) while any work log is still running, so timers must be
+  stopped first. A successful archive freezes `total_hours`; reopening makes
+  it live again, and work logs cannot be changed while archived.
 - `DELETE /api/v1/repairs/<id>` — delete; removes work log + parts and
   reverses its gas movements on the cylinders
 
 `customer`/`vehicle` are validated against the legacy reference data
 (409 when unknown — no DB FK exists, `VICLIENTI` is a view).
+
+**`total_hours`** is the repair's worked time in hours. While the repair is
+active it is computed from completed work logs: only the part overlapping the
+workshop's `working_hours` intervals counts, and dates inside a `holidays`
+range are skipped (both endpoints included). Running or incomplete entries
+contribute zero. Logs are summed separately, so two operators working the same
+hour are two worked hours. Archiving freezes the value; later working-hours or
+holiday edits do not change an archived repair until it is reopened.
 
 **Parts payload** (create or update): `[{"id_part": 1, "quantity": 2,
 "unit_price": 80}]` — `unit_price` optional.
@@ -184,9 +196,11 @@ their minified view generated on first `/thumbnail` request.
 
 - `GET /api/v1/repairs/<id>/work-log` — list entries
 - `POST /api/v1/repairs/<id>/work-log` — add entry: `start_time`, `end_time`,
-  `operator` (ISO 8601), plus optional gas fields
+  `operator` (required, one of the configured operators), optional
+  `description`, plus optional gas fields
 - `PUT /api/v1/repairs/<id>/work-log/<entry_id>` — update (gas fields, when
-  present, replace the entry's whole gas dataset and re-apply the balance)
+  present, replace the entry's whole gas dataset and re-apply the balance;
+  an unchanged legacy operator stays editable)
 - `DELETE /api/v1/repairs/<id>/work-log/<entry_id>` — delete; reverses the
   entry's gas movements on the cylinder
 
@@ -203,6 +217,15 @@ recovery adds to the cylinder balance and recharge subtracts from it. A
 movement that would take the balance below zero or above the cylinder's full
 weight is rejected (400). The balance is updated in the same transaction as
 the entry and reversed when the entry (or its parent repair) is deleted.
+
+**Operator and timer handoff**: creating a work log requires an `operator`
+from the configured `operators` list (400 otherwise). A *running* entry has a
+`start_time` and no `end_time`; creating one stops the same operator's running
+entries on active repairs at the new start time, in the same transaction,
+including entries on other repairs. Completed historical entries and date-less
+entries do not stop a timer. A start earlier than a running entry's own start
+is rejected (409) without stopping anything. Archived repairs are read-only
+(409) until reopened.
 
 ### Settings
 

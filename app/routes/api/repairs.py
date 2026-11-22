@@ -11,6 +11,7 @@ from flask import jsonify, request, send_file
 
 from app.extensions import db
 from app.routes.api import bp
+from app.services import guard
 from app.services import repairs as repairs_service
 from app.services.errors import BadRequest
 
@@ -60,6 +61,9 @@ def get_repair(item_id):
 
 @bp.put("/repairs/<int:item_id>")
 def update_repair(item_id):
+    # Take the mutation guard before the first read so a concurrent archive or
+    # timer start cannot interleave with the state this request sees.
+    guard.acquire()
     repair = repairs_service.get_repair(item_id)
     repairs_service.update_repair(repair, _json_body())
     db.session.commit()
@@ -68,6 +72,7 @@ def update_repair(item_id):
 
 @bp.delete("/repairs/<int:item_id>")
 def delete_repair(item_id):
+    guard.acquire()
     repair = repairs_service.get_repair(item_id)
     repairs_service.delete_repair(repair)  # restores balances, then cascades
     db.session.commit()
@@ -84,6 +89,7 @@ def list_work_log(repair_id):
 
 @bp.post("/repairs/<int:repair_id>/work-log")
 def add_work_log_entry(repair_id):
+    guard.acquire()
     repair = repairs_service.get_repair(repair_id)
     entry = repairs_service.add_work_log_entry(repair, _json_body())
     db.session.commit()
@@ -92,6 +98,7 @@ def add_work_log_entry(repair_id):
 
 @bp.put("/repairs/<int:repair_id>/work-log/<int:entry_id>")
 def update_work_log_entry(repair_id, entry_id):
+    guard.acquire()
     repair = repairs_service.get_repair(repair_id)
     entry = repairs_service.get_work_log_entry(repair, entry_id)
     repairs_service.update_work_log_entry(entry, _json_body())
@@ -101,6 +108,7 @@ def update_work_log_entry(repair_id, entry_id):
 
 @bp.delete("/repairs/<int:repair_id>/work-log/<int:entry_id>")
 def delete_work_log_entry(repair_id, entry_id):
+    guard.acquire()
     repair = repairs_service.get_repair(repair_id)
     entry = repairs_service.get_work_log_entry(repair, entry_id)
     repairs_service.delete_work_log_entry(entry)

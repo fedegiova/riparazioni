@@ -7,6 +7,7 @@ import type {
   RepairCreate,
   RepairDetail,
   RepairUpdate,
+  WorkLogCreate,
   WorkLogEntry,
   WorkLogInput,
 } from './types'
@@ -57,7 +58,7 @@ export async function deleteRepair(id: number): Promise<void> {
 
 export async function addWorkLog(
   repairId: number,
-  body: WorkLogInput,
+  body: WorkLogCreate,
 ): Promise<WorkLogEntry> {
   const { data } = await api.POST('/api/v1/repairs/{repair_id}/work-log', {
     params: { path: { repair_id: repairId } },

@@ -39,6 +39,7 @@ function WorkLogPage() {
   const [startTime, setStartTime] = useState(nowDateTimeInput)
   const [endTime, setEndTime] = useState('')
   const [operator, setOperator] = useState('')
+  const [description, setDescription] = useState('')
   const [operators, setOperators] = useState<string[]>([])
   const [gasOn, setGasOn] = useState(false)
   const [gasState, setGasState] = useState<'' | GasState>('')
@@ -58,6 +59,7 @@ function WorkLogPage() {
     setStartTime(toDateTimeInput(entry.start_time))
     setEndTime(toDateTimeInput(entry.end_time))
     setOperator(entry.operator ?? '')
+    setDescription(entry.description ?? '')
     const hasGas = Boolean(
       entry.gas_system_state || entry.gas_recharge || entry.gas_recharge_weight,
     )
@@ -98,6 +100,7 @@ function WorkLogPage() {
         start_time: toIso(startTime),
         end_time: toIso(endTime),
         operator: operator || undefined,
+        description: description || undefined,
       }
       if (gasOn) {
         body.gas_system_state = gasState || null
@@ -106,7 +109,11 @@ function WorkLogPage() {
         body.gas_recovered_weight = recoveredWeight ? Number(recoveredWeight) : null
       }
       if (isNew) {
-        await addWorkLog(repairId, body)
+        if (!operator) {
+          setActionError('Select a configured operator before saving.')
+          return
+        }
+        await addWorkLog(repairId, { ...body, operator })
       } else {
         await updateWorkLog(repairId, Number(entryId), body)
       }
@@ -160,34 +167,39 @@ function WorkLogPage() {
               slotProps={{ inputLabel: { shrink: true } }}
             />
           </Stack>
-          {operators.length > 0 ? (
-            <FormControl fullWidth>
-              <InputLabel id="operator-label" shrink>
-                Operator
-              </InputLabel>
-              <Select
-                labelId="operator-label"
-                label="Operator"
-                displayEmpty
-                value={operator}
-                onChange={(event) => setOperator(event.target.value)}
-              >
-                <MenuItem value="">None</MenuItem>
-                {operatorOptions.map((name) => (
-                  <MenuItem key={name} value={name}>
-                    {name}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-          ) : (
-            <TextField
+          {isNew && operators.length === 0 && (
+            <Alert severity="warning">
+              No operators are configured. Add an operator in Settings before
+              creating a work log.
+            </Alert>
+          )}
+          <FormControl fullWidth>
+            <InputLabel id="operator-label" shrink>
+              Operator
+            </InputLabel>
+            <Select
+              labelId="operator-label"
               label="Operator"
+              displayEmpty
               value={operator}
               onChange={(event) => setOperator(event.target.value)}
-              fullWidth
-            />
-          )}
+            >
+              {!isNew && <MenuItem value="">None</MenuItem>}
+              {operatorOptions.map((name) => (
+                <MenuItem key={name} value={name}>
+                  {name}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <TextField
+            label="Description"
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            multiline
+            minRows={2}
+            fullWidth
+          />
 
           <Box>
             <Button
@@ -250,7 +262,11 @@ function WorkLogPage() {
 
           <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
             <Button onClick={() => navigate(`/repairs/${repairId}`)}>Cancel</Button>
-            <Button variant="contained" onClick={handleSave} disabled={saving}>
+            <Button
+              variant="contained"
+              onClick={handleSave}
+              disabled={saving || (isNew && (!operator || operators.length === 0))}
+            >
               {saving ? 'Saving…' : 'Save'}
             </Button>
           </Box>

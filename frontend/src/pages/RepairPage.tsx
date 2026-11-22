@@ -215,6 +215,7 @@ function RepairPage() {
   if (loadError) return <Alert severity="error">{loadError}</Alert>
 
   const workLog = repair?.work_log ?? []
+  const isArchived = Boolean(repair?.end_data)
 
   return (
     <Box>
@@ -367,12 +368,14 @@ function RepairPage() {
               }}
             >
               <Typography variant="h6">Work log</Typography>
-              <Button
-                startIcon={<AddIcon />}
-                onClick={() => navigate(`/repairs/${repairId}/work-log/new`)}
-              >
-                Add work log
-              </Button>
+              {!isArchived && (
+                <Button
+                  startIcon={<AddIcon />}
+                  onClick={() => navigate(`/repairs/${repairId}/work-log/new`)}
+                >
+                  Add work log
+                </Button>
+              )}
             </Box>
             <TableContainer>
               <Table aria-label="Work log">
@@ -381,13 +384,14 @@ function RepairPage() {
                     <TableCell>Start</TableCell>
                     <TableCell>End</TableCell>
                     <TableCell>Operator</TableCell>
+                    <TableCell>Description</TableCell>
                     <TableCell align="right">Actions</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {workLog.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={4}>No work-log entries.</TableCell>
+                      <TableCell colSpan={5}>No work-log entries.</TableCell>
                     </TableRow>
                   ) : (
                     workLog.map((entry) => (
@@ -395,29 +399,36 @@ function RepairPage() {
                         <TableCell>{formatDateTime(entry.start_time)}</TableCell>
                         <TableCell>{formatDateTime(entry.end_time)}</TableCell>
                         <TableCell>{entry.operator ?? '—'}</TableCell>
+                        <TableCell>{entry.description ?? '—'}</TableCell>
                         <TableCell align="right">
-                          <IconButton
-                            aria-label={`Stop work log ${entry.id}`}
-                            disabled={Boolean(entry.end_time)}
-                            onClick={() => handleStopEntry(entry.id)}
-                          >
-                            <StopCircleIcon />
-                          </IconButton>
-                          <IconButton
-                            aria-label={`Edit work log ${entry.id}`}
-                            onClick={() =>
-                              navigate(`/repairs/${repairId}/work-log/${entry.id}`)
-                            }
-                          >
-                            <EditIcon />
-                          </IconButton>
-                          <IconButton
-                            color="error"
-                            aria-label={`Cancel work log ${entry.id}`}
-                            onClick={() => handleCancelEntry(entry.id)}
-                          >
-                            <DeleteIcon />
-                          </IconButton>
+                          {isArchived ? (
+                            '—'
+                          ) : (
+                            <>
+                              <IconButton
+                                aria-label={`Stop work log ${entry.id}`}
+                                disabled={Boolean(entry.end_time)}
+                                onClick={() => handleStopEntry(entry.id)}
+                              >
+                                <StopCircleIcon />
+                              </IconButton>
+                              <IconButton
+                                aria-label={`Edit work log ${entry.id}`}
+                                onClick={() =>
+                                  navigate(`/repairs/${repairId}/work-log/${entry.id}`)
+                                }
+                              >
+                                <EditIcon />
+                              </IconButton>
+                              <IconButton
+                                color="error"
+                                aria-label={`Cancel work log ${entry.id}`}
+                                onClick={() => handleCancelEntry(entry.id)}
+                              >
+                                <DeleteIcon />
+                              </IconButton>
+                            </>
+                          )}
                         </TableCell>
                       </TableRow>
                     ))
