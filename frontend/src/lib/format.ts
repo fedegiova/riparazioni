@@ -33,8 +33,20 @@ export function nowDateTimeInput(): string {
   )
 }
 
+/** Current local date/time as a naive ISO datetime, shaped for the API. */
+export function nowIso(): string {
+  return `${nowDateTimeInput()}:00`
+}
+
+const DATETIME_LOCAL_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/
+
+/**
+ * Serialize a `<input type="datetime-local">` value for the API.
+ *
+ * The workshop database stores naive datetimes, so the entered wall-clock time
+ * is sent unchanged (normalized to seconds) and is never converted to UTC.
+ */
 export function toIso(value: string): string | undefined {
-  if (!value) return undefined
-  const parsed = new Date(value)
-  return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString()
+  if (!DATETIME_LOCAL_PATTERN.test(value)) return undefined
+  return value.length === 16 ? `${value}:00` : value
 }

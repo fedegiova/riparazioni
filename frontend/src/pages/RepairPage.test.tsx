@@ -123,10 +123,16 @@ describe('RepairPage', () => {
 
     const notes = await screen.findByLabelText('Notes')
     fireEvent.change(notes, { target: { value: 'created' } })
+    fireEvent.change(screen.getByLabelText('Start date'), {
+      target: { value: '2026-11-22T00:07' },
+    })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() => expect(createRepair).toHaveBeenCalled())
-    expect(createRepair.mock.calls[0][0]).toMatchObject({ notes: 'created' })
+    expect(createRepair.mock.calls[0][0]).toMatchObject({
+      notes: 'created',
+      start_data: '2026-11-22T00:07:00',
+    })
   })
 
   it('edits an existing repair', async () => {
@@ -244,6 +250,9 @@ describe('RepairPage', () => {
     expect(updateRepair.mock.calls[0][1]).toMatchObject({
       end_data: expect.any(String),
     })
+    expect(updateRepair.mock.calls[0][1].end_data).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/,
+    )
   })
 
   it('prefills the start date for a new repair', async () => {
@@ -354,5 +363,8 @@ describe('RepairPage', () => {
     expect(updateWorkLog.mock.calls[0][2]).toMatchObject({
       end_time: expect.any(String),
     })
+    expect(updateWorkLog.mock.calls[0][2].end_time).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/,
+    )
   })
 })

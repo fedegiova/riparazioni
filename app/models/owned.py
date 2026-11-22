@@ -29,6 +29,11 @@ def _now() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
+def _local_now() -> datetime:
+    """Naive local timestamp default for workshop-facing datetimes."""
+    return datetime.now().replace(tzinfo=None)
+
+
 class Refrigerator(db.Model):
     __tablename__ = "REFRIGERATORS"
 
@@ -201,7 +206,7 @@ class Repairs(db.Model):
     # External reference, no DB FK (see module docstring): validated in the
     # service layer against DATIDBSTORICO.TBALLLESTIMENTI.
     vehicle = db.Column(db.Integer)
-    start_data = db.Column(db.DateTime, default=_now)
+    start_data = db.Column(db.DateTime, default=_local_now)
     end_data = db.Column(db.DateTime)
     # Delivery date requested by the customer (a date, not a timestamp);
     # distinct from end_data, which is the actual close time.

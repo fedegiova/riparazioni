@@ -72,6 +72,27 @@ describe('WorkLogPage', () => {
     expect(updateWorkLog.mock.calls[0][2]).toMatchObject({ operator: 'MARIO' })
   })
 
+  it('sends the entered times as local wall-clock time', async () => {
+    getRepair.mockResolvedValue(baseRepair)
+    updateWorkLog.mockResolvedValue({ id: 10 })
+    renderAt('/repairs/1/work-log/10')
+
+    await screen.findByLabelText('Start time')
+    fireEvent.change(screen.getByLabelText('Start time'), {
+      target: { value: '2026-11-22T00:13' },
+    })
+    fireEvent.change(screen.getByLabelText('End time'), {
+      target: { value: '2026-11-22T01:43' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(updateWorkLog).toHaveBeenCalled())
+    expect(updateWorkLog.mock.calls[0][2]).toMatchObject({
+      start_time: '2026-11-22T00:13:00',
+      end_time: '2026-11-22T01:43:00',
+    })
+  })
+
   it('prefills the start time for a new entry', async () => {
     getRepair.mockResolvedValue(baseRepair)
     renderAt('/repairs/1/work-log/new')

@@ -39,6 +39,7 @@ import { useApi } from '../hooks/useApi'
 import {
   formatDateTime,
   nowDateTimeInput,
+  nowIso,
   toDateInput,
   toDateTimeInput,
   toIso,
@@ -142,7 +143,7 @@ function RepairPage() {
     if (repairId === null) return
     setActionError(null)
     try {
-      await updateRepair(repairId, { end_data: new Date().toISOString() })
+      await updateRepair(repairId, { end_data: nowIso() })
       await reload()
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Unexpected error')
@@ -165,7 +166,7 @@ function RepairPage() {
     setActionError(null)
     try {
       await updateWorkLog(repairId, entryId, {
-        end_time: new Date().toISOString(),
+        end_time: nowIso(),
       })
       await reload()
     } catch (err) {

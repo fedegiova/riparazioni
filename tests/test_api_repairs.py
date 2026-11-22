@@ -4,7 +4,7 @@ Covers every scenario in the repairs capability spec: create/delivery date,
 retrieve, update, delete (cascade + balance restore), parts association,
 work log, and gas-recharge bookkeeping.
 """
-from datetime import UTC, datetime
+from datetime import datetime
 from io import BytesIO
 
 from openpyxl import load_workbook
@@ -14,7 +14,7 @@ from app.models import Customer, GasCylinder, Repairs, RepairWorkLog, ServicePar
 
 
 def _now():
-    return datetime.now(UTC).replace(tzinfo=None)
+    return datetime.now().replace(tzinfo=None)
 
 
 def _jpeg_bytes(size=(64, 64)):
