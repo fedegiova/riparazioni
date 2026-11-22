@@ -183,6 +183,7 @@ function RepairsListPage() {
               <TableRow>
                 <TableCell>Cliente</TableCell>
                 <TableCell>Total hours</TableCell>
+                <TableCell>Delivery date</TableCell>
                 <TableCell>End date</TableCell>
                 <TableCell align="right">Actions</TableCell>
               </TableRow>
@@ -190,7 +191,7 @@ function RepairsListPage() {
             <TableBody>
               {(data ?? []).length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={4}>No repairs found.</TableCell>
+                  <TableCell colSpan={5}>No repairs found.</TableCell>
                 </TableRow>
               ) : (
                 (data ?? []).map((repair) => (
@@ -198,6 +199,7 @@ function RepairsListPage() {
                     <TableCell>{repair.customer_name ?? '—'}</TableCell>
                     <TableCell>{formatHours(repair.total_hours)}</TableCell>
                     <TableCell>{formatDate(repair.delivery_date)}</TableCell>
+                    <TableCell>{formatDate(repair.end_data)}</TableCell>
                     <TableCell align="right">
                       <IconButton
                         aria-label={`Open repair ${repair.id}`}

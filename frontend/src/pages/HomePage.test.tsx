@@ -58,6 +58,8 @@ describe('HomePage', () => {
     expect(await screen.findByText('ACME')).toBeTruthy()
     expect(screen.queryByText('Beta')).toBeNull()
     expect(screen.getByText('4h 30m')).toBeTruthy()
+    expect(screen.getByRole('columnheader', { name: 'Delivery date' })).toBeTruthy()
+    expect(screen.getByText('2026-11-12')).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: 'Open repair 1' }))
     expect(await screen.findByText('repair detail page')).toBeTruthy()

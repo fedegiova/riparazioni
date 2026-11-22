@@ -101,6 +101,20 @@ class TestRetrieve:
         response = client.get("/api/v1/repairs?customer=1")
         assert all(item["customer"] == 1 for item in response.get_json())
 
+    def test_start_date_to_date_only_includes_whole_day(self, client, db):
+        repair_id = _create_repair(
+            client, start_data="2026-11-01T10:00:00"
+        ).get_json()["id"]
+        listing = client.get("/api/v1/repairs?start_date_to=2026-11-01").get_json()
+        assert [item["id"] for item in listing] == [repair_id]
+
+    def test_start_date_to_datetime_keeps_exact_bound(self, client, db):
+        _create_repair(client, start_data="2026-11-01T10:00:00")
+        listing = client.get(
+            "/api/v1/repairs?start_date_to=2026-11-01T09:00:00"
+        ).get_json()
+        assert listing == []
+
     def test_detail_includes_work_log_and_parts(self, client, db):
         part = ServicePart(name="P")
         _cylinder(db)

@@ -24,7 +24,7 @@ The system SHALL allow creating a repair with customer, vehicle, optional refrig
 - **THEN** the system responds with HTTP 409 and no repair is created
 
 ### Requirement: Retrieve repairs
-The system SHALL return a list of repairs, filterable by customer, vehicle, refrigerator, and a start-date range, and a single repair by ID. Each repair SHALL report the customer's resolved name and its total worked hours, computed as the sum of its work-log entry durations. The single-repair response SHALL additionally include its work-log entries, associated parts, and pictures.
+The system SHALL return a list of repairs, filterable by customer, vehicle, refrigerator, and a start-date range, and a single repair by ID. A start-date upper bound supplied as a date (with no time) SHALL include the whole of that day. Each repair SHALL report the customer's resolved name and its total worked hours, computed as the sum of its work-log entry durations. The single-repair response SHALL additionally include its work-log entries, associated parts, and pictures.
 
 #### Scenario: List all repairs
 - **WHEN** a client GETs /api/v1/repairs
@@ -37,6 +37,10 @@ The system SHALL return a list of repairs, filterable by customer, vehicle, refr
 #### Scenario: Filter by customer
 - **WHEN** a client GETs /api/v1/repairs?customer=<id>
 - **THEN** the response contains only repairs for that customer
+
+#### Scenario: Start-date upper bound includes the whole day
+- **WHEN** a client GETs /api/v1/repairs?start_date_to=2026-11-01 and a repair starts at 2026-11-01T10:00:00
+- **THEN** the response contains that repair
 
 #### Scenario: Repair detail includes work log and parts
 - **WHEN** a client GETs /api/v1/repairs/<id> for a repair with two work-log entries and one part

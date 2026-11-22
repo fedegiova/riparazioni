@@ -24,7 +24,7 @@ import SearchIcon from '@mui/icons-material/Search'
 import StopCircleIcon from '@mui/icons-material/StopCircle'
 import { useNavigate, useParams } from 'react-router-dom'
 import { listServiceParts } from '../api/equipment'
-import { listCustomers, listVehicles } from '../api/reference'
+import { getVehicle, listCustomers, listVehicles } from '../api/reference'
 import {
   createRepair,
   deleteWorkLog,
@@ -93,9 +93,10 @@ function RepairPage() {
         ? { id: repair.customer, name: repair.customer_name ?? `#${repair.customer}` }
         : null,
     )
-    setVehicle(
-      repair.vehicle != null ? { id: repair.vehicle, label: `#${repair.vehicle}` } : null,
-    )
+    const vehicleId = repair.vehicle ?? null
+    // Seed the field with the id so it is never empty, then resolve the plate
+    // (the repair payload only carries the vehicle id).
+    setVehicle(vehicleId != null ? { id: vehicleId, label: `#${vehicleId}` } : null)
     setStartDate(toDateTimeInput(repair.start_data))
     setDeliveryDate(toDateInput(repair.delivery_date))
     setNotes(repair.notes ?? '')
@@ -107,6 +108,26 @@ function RepairPage() {
         unit_price: part.unit_price ?? part.part?.price ?? null,
       })),
     )
+
+    if (vehicleId === null) return
+    let active = true
+    getVehicle(vehicleId)
+      .then((vehicle) => {
+        if (!active) return
+        // Do not clobber a vehicle the user picked while the lookup was in
+        // flight: only replace the field while it still holds this repair's id.
+        setVehicle((current) =>
+          current?.id === vehicleId
+            ? { id: vehicleId, label: vehicle.targa ?? `#${vehicleId}` }
+            : current,
+        )
+      })
+      .catch(() => {
+        // Keep the `#id` fallback when the plate cannot be resolved.
+      })
+    return () => {
+      active = false
+    }
   }, [repair])
 
   async function handleSave() {

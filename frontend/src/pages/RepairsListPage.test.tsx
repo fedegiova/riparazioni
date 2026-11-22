@@ -69,6 +69,18 @@ describe('RepairsListPage', () => {
     await waitFor(() => expect(screen.queryByText('Beta')).toBeNull())
   })
 
+  it('shows delivery and end dates in separate columns', async () => {
+    listRepairs.mockResolvedValue([active, completed])
+    renderPage()
+
+    await screen.findByText('ACME')
+    expect(screen.getByRole('columnheader', { name: 'Delivery date' })).toBeTruthy()
+    expect(screen.getByRole('columnheader', { name: 'End date' })).toBeTruthy()
+    expect(screen.getByText('2026-11-10')).toBeTruthy() // active delivery date
+    expect(screen.getByText('2026-10-05')).toBeTruthy() // completed end date
+    expect(screen.getAllByText('—')).toHaveLength(2) // open end + missing delivery
+  })
+
   it('deletes a repair only after confirmation', async () => {
     listRepairs.mockResolvedValue([active])
     deleteRepair.mockResolvedValue(undefined)

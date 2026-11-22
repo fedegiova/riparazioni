@@ -60,7 +60,7 @@ function HomePage() {
               <TableRow>
                 <TableCell>Cliente</TableCell>
                 <TableCell>Total hours</TableCell>
-                <TableCell>End date</TableCell>
+                <TableCell>Delivery date</TableCell>
                 <TableCell align="right">Actions</TableCell>
               </TableRow>
             </TableHead>

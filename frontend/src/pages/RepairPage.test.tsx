@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, Route, Routes, useParams } from 'react-router-dom'
 import RepairPage from './RepairPage'
 
@@ -11,6 +11,7 @@ const {
   deleteWorkLog,
   listCustomers,
   listVehicles,
+  getVehicle,
   listServiceParts,
   uploadPicture,
   deletePicture,
@@ -22,6 +23,7 @@ const {
   deleteWorkLog: vi.fn(),
   listCustomers: vi.fn(),
   listVehicles: vi.fn(),
+  getVehicle: vi.fn(),
   listServiceParts: vi.fn(),
   uploadPicture: vi.fn(),
   deletePicture: vi.fn(),
@@ -34,7 +36,7 @@ vi.mock('../api/repairs', () => ({
   updateWorkLog,
   deleteWorkLog,
 }))
-vi.mock('../api/reference', () => ({ listCustomers, listVehicles }))
+vi.mock('../api/reference', () => ({ listCustomers, listVehicles, getVehicle }))
 vi.mock('../api/equipment', () => ({ listServiceParts }))
 vi.mock('../api/pictures', () => ({
   listPictures: vi.fn(),
@@ -72,6 +74,10 @@ vi.mock('yet-another-react-lightbox', () => ({
 afterEach(() => {
   cleanup()
   vi.resetAllMocks()
+})
+
+beforeEach(() => {
+  getVehicle.mockResolvedValue({ id: 5, targa: 'AB123CD' })
 })
 
 const baseRepair = {
@@ -147,6 +153,14 @@ describe('RepairPage', () => {
     await waitFor(() => expect(updateRepair).toHaveBeenCalled())
     expect(updateRepair.mock.calls[0][0]).toBe(1)
     expect(updateRepair.mock.calls[0][1]).toMatchObject({ notes: 'updated' })
+  })
+
+  it('shows the loaded vehicle plate instead of its id', async () => {
+    getRepair.mockResolvedValue(baseRepair)
+    getVehicle.mockResolvedValue({ id: 5, targa: 'AB123CD' })
+    renderAt('/repairs/1')
+
+    expect(await screen.findByDisplayValue('AB123CD')).toBeTruthy()
   })
 
   it('picks a customer through the search modal', async () => {

@@ -68,6 +68,23 @@ def _parse_date(value, name: str):
     raise BadRequest(f"{name} must be an ISO 8601 date")
 
 
+def _is_date_only(value) -> bool:
+    """True when *value* is a date string with no time component.
+
+    Used to widen a range's upper bound to the whole day: `_parse_datetime`
+    turns a date-only value into midnight at the start of that day.
+    """
+    if not isinstance(value, str):
+        return False
+    from datetime import date
+
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
 def _validate_external_reference(model, item_id, name: str) -> None:
     """customer/vehicle have no DB FK: verify against the legacy data (409)."""
     if item_id is not None and db.session.get(model, item_id) is None:
@@ -353,7 +370,14 @@ def list_repairs(params: dict) -> list[Repairs]:
     if start_from is not None:
         query = query.where(Repairs.start_data >= start_from)
     if start_to is not None:
-        query = query.where(Repairs.start_data <= start_to)
+        if _is_date_only(params.get("start_date_to")):
+            # A date-only upper bound covers the whole selected day, so use a
+            # half-open comparison against the following midnight.
+            from datetime import timedelta
+
+            query = query.where(Repairs.start_data < start_to + timedelta(days=1))
+        else:
+            query = query.where(Repairs.start_data <= start_to)
     repairs = list(db.session.execute(query).scalars().all())
     _decorate_repairs(repairs)
     return repairs
