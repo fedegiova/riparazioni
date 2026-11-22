@@ -25,35 +25,41 @@ _YEAR_RE = re.compile(r"^\d{4}$")
 
 
 def _empty_working_hours() -> dict:
-    return {day: [] for day in WEEKDAYS}
+    day_hours = [["08:00", "12:00"], ["13:00", "16:30"]]
+    return {
+        "mon": day_hours,
+        "tue": day_hours,
+        "wed": day_hours,
+        "thu": day_hours,
+        "fri": day_hours,
+        "sat": [["08:00", "12:00"]],
+        "sun": [],
+    }
 
 
 # Defaults are factories so a caller can never mutate the stored default.
 _DEFAULT_FACTORIES = {
-    "operators": list,
+    "operators": lambda: ["FABRI", "CLAUDIO", "PASQUALE", "MOHAMMED"],
     "working_hours": _empty_working_hours,
     "holidays": dict,
-    "gas_types": list,
+    "gas_types": lambda: ["R32", "R410A"],
 }
 
 
 # --- validators (read-only) --------------------------------------------------
+
 
 def _is_time(value) -> bool:
     return isinstance(value, str) and bool(_TIME_RE.match(value))
 
 
 def _validate_operators(value) -> None:
-    if not isinstance(value, list) or not all(
-        isinstance(item, str) and item for item in value
-    ):
+    if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
         raise BadRequest("operators must be a list of non-empty strings")
 
 
 def _validate_gas_types(value) -> None:
-    if not isinstance(value, list) or not all(
-        isinstance(item, str) and item for item in value
-    ):
+    if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
         raise BadRequest("gas_types must be a list of non-empty strings")
 
 
