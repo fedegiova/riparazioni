@@ -3,8 +3,12 @@ import { defineConfig } from 'vitest/config'
 
 // https://vite.dev/config/
 export default defineConfig({
-  // Relative base so the static bundle can be served from / or any subpath.
-  base: './',
+  // Root-absolute base: the app's routes are root-relative, so its assets
+  // must be too. A relative base (`./`) makes the entry document request
+  // `./assets/...`, which on a nested route such as `/repairs/1` resolves
+  // under the route (`/repairs/assets/...`) and leaves the page blank on
+  // direct navigation or refresh.
+  base: '/',
   plugins: [react()],
   server: {
     // Dev proxy: keep the app same-origin against the local Flask backend

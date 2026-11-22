@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
+    "smoke": "npm run build && node scripts/smoke-deep-link.mjs",
     "test": "vitest run",
     "generate:api": "openapi-typescript ../docs/openapi.yaml -o src/api/generated/schema.d.ts"
   },

@@ -25,9 +25,22 @@ npm install
 | `npm run dev`        | Dev server with hot reload at `http://localhost:5173`               |
 | `npm run build`      | Type-check (`tsc -b`), then build the production bundle to `dist/` |
 | `npm run preview`    | Serve the production build locally                                  |
+| `npm run smoke`      | Build, then serve and verify nested-route deep links load           |
 | `npm run lint`       | Lint the source (oxlint)                                            |
 | `npm test`           | Run the test suite (Vitest + Testing Library, jsdom)                |
 | `npm run generate:api` | Regenerate the typed API client from `docs/openapi.yaml`          |
+
+## Deep-link smoke check
+
+`npm run smoke` builds the bundle, serves it with `vite preview`, and requests
+several routes directly — the way a browser does on first load or refresh —
+including the nested routes `/repairs/1`, `/repairs/new`,
+`/repairs/1/work-log/2`, and `/magazzino/bombole/1`. For each route it resolves
+the entry document's module script and stylesheet against that route's URL and
+asserts the server returns them as JavaScript / CSS. This guards the asset base
+(`base` in `vite.config.ts`): a relative base makes nested routes request
+`/repairs/assets/...`, which the SPA fallback answers with `index.html`, so the
+app never mounts and the page is blank.
 
 ## Dev proxy
 

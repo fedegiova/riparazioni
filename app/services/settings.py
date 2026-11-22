@@ -135,6 +135,7 @@ def _validate(name: str, value) -> None:
 
 # --- reads -------------------------------------------------------------------
 
+
 def _row(name: str):
     return db.session.get(Settings, name)
 
@@ -159,6 +160,7 @@ def get_setting(name: str):
 
 
 # --- writes ------------------------------------------------------------------
+
 
 def _upsert(name: str, value) -> None:
     encoded = json.dumps(value)
