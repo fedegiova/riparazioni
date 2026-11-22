@@ -28,7 +28,7 @@ read as its default value; an unknown setting name SHALL respond with 404.
 #### Scenario: Read an unwritten known setting returns its default
 
 - **WHEN** a client GETs /api/v1/settings/operators and no operators have been stored
-- **THEN** the system responds with HTTP 200 and an empty JSON array
+- **THEN** the system responds with HTTP 200 and the configured default operator list
 
 #### Scenario: Read an unknown setting
 
@@ -91,7 +91,7 @@ SHALL revert it to its default value on subsequent reads.
 #### Scenario: Delete a known setting reverts to default
 
 - **WHEN** a client DELETEs /api/v1/settings/operators after operators were stored
-- **THEN** the system responds with HTTP 204 and a subsequent read returns the default empty array
+- **THEN** the system responds with HTTP 204 and a subsequent read returns the configured default operator list
 
 #### Scenario: Delete an unknown setting
 
@@ -101,7 +101,8 @@ SHALL revert it to its default value on subsequent reads.
 ### Requirement: Operators setting
 
 The `operators` setting SHALL be a JSON array of operator names, each a
-non-empty string.
+non-empty string. When never written it SHALL read as the configured default
+operator list.
 
 #### Scenario: Operators round-trip
 
@@ -113,7 +114,8 @@ non-empty string.
 The `working_hours` setting SHALL be a JSON object mapping weekday names
 (`mon`..`sun`) to that day's list of working intervals. Each interval SHALL be a
 two-element array of `HH:MM` times with the begin strictly before the end; a day
-with an empty list is closed.
+with an empty list is closed. When never written it SHALL read as the configured
+default weekly schedule.
 
 #### Scenario: Working hours round-trip
 
@@ -124,6 +126,11 @@ with an empty list is closed.
 
 - **WHEN** a client writes a working_hours interval of `["18:00","08:00"]`
 - **THEN** the system responds with HTTP 400
+
+#### Scenario: Unwritten working hours reads as the default schedule
+
+- **WHEN** a client GETs /api/v1/settings/working_hours and no schedule has been stored
+- **THEN** the system responds with HTTP 200 and the configured default weekly schedule
 
 ### Requirement: Holidays setting
 
@@ -146,17 +153,18 @@ boundary SHALL be represented as two ranges, one in each year.
 ### Requirement: Gas types setting
 
 The `gas_types` setting SHALL be a JSON array of gas type names, each a
-non-empty string. When never written it SHALL read as an empty array.
+non-empty string. When never written it SHALL read as the configured default
+gas type list.
 
 #### Scenario: Gas types round-trip
 
 - **WHEN** a client writes the gas_types setting with `["R410A", "R134a"]`
 - **THEN** the system responds with HTTP 200 and a subsequent read returns the same array
 
-#### Scenario: Unwritten gas types reads as empty
+#### Scenario: Unwritten gas types reads as the default list
 
 - **WHEN** a client GETs /api/v1/settings/gas_types and no gas types have been stored
-- **THEN** the system responds with HTTP 200 and an empty JSON array
+- **THEN** the system responds with HTTP 200 and the configured default gas type list
 
 #### Scenario: Reject invalid gas types
 
