@@ -74,7 +74,10 @@ def upgrade():
     )
     op.create_table(
         'TRANSACTION_GUARDS',
-        sa.Column('id', sa.Integer(), nullable=False),
+        # Fixed singleton key (id = 1): autoincrement=False keeps it a plain
+        # INT instead of an IDENTITY column, so the seed insert below works on
+        # SQL Server without IDENTITY_INSERT.
+        sa.Column('id', sa.Integer(), autoincrement=False, nullable=False),
         sa.Column('version', sa.Integer(), nullable=False),
         sa.PrimaryKeyConstraint('id'),
     )

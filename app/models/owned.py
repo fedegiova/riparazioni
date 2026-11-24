@@ -418,5 +418,7 @@ class TransactionGuard(db.Model):
 
     __tablename__ = "TRANSACTION_GUARDS"
 
-    id = db.Column(db.Integer, primary_key=True)
+    # Fixed singleton key (id = 1): not an IDENTITY column, so the row can be
+    # inserted explicitly on SQL Server without IDENTITY_INSERT.
+    id = db.Column(db.Integer, primary_key=True, autoincrement=False)
     version = db.Column(db.Integer, nullable=False, default=0)
