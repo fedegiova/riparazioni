@@ -5,6 +5,10 @@
 #   sudo nginx -t && sudo systemctl reload nginx
 #
 # Adjust server_name (and add TLS / certificate blocks) for your host.
+#
+# Split deployment: Nginx serves the built frontend (Vite SPA, base "/") from
+# frontend/dist and proxies only the API and health checks to gunicorn. The
+# SPA calls /api/v1/... as same-origin relative URLs, so no CORS is involved.
 
 upstream riparazioni_app {
     server 127.0.0.1:8000;
@@ -18,18 +22,46 @@ server {
     # Maximum upload size; raise as needed.
     client_max_body_size 50m;
 
-    # Static files straight from the app package.
+    # Built SPA output (run `npm run build` in frontend/ and copy dist/ here).
+    root /opt/riparazioni/frontend/dist;
+    index index.html;
+
+    # Hashed Vite assets: safe to cache for a long time.
+    location /assets/ {
+        try_files $uri =404;
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # Flask package static files (if the backend serves any).
     location /static/ {
         alias /opt/riparazioni/app/static/;
         expires 7d;
     }
 
-    location / {
+    # API -> gunicorn. No trailing slash on proxy_pass: the backend must keep
+    # the /api/v1/... prefix it expects.
+    location /api/ {
         proxy_pass http://riparazioni_app;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 60s;
+    }
+
+    # Health checks -> gunicorn.
+    location /healthz {
+        proxy_pass http://riparazioni_app;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # SPA client-side routing: unknown paths fall back to index.html so deep
+    # links (e.g. /repairs/1) load the app instead of a 404.
+    location / {
+        try_files $uri $uri/ /index.html;
     }
 }

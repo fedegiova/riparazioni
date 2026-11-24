@@ -472,9 +472,15 @@ Nginx. All filesystem writes happen under `/opt/riparazioni/var`.
    sudo cp deploy/nginx.conf.example /etc/nginx/sites-available/riparazioni
    sudo ln -s ../sites-available/riparazioni /etc/nginx/sites-enabled/
    sudo nginx -t && sudo systemctl reload nginx
+
+8. **Build the frontent**:
+
+   ```bash
+   cd frontend;
+   npm run build
    ```
 
-8. **Verify**:
+9. **Verify**:
 
    ```bash
    curl http://127.0.0.1/healthz
