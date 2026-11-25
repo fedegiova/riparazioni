@@ -21,6 +21,33 @@ def _table(name: str, *columns, schema: str = EXTERNAL_DB_SCHEMA) -> db.Table:
     return db.Table(name, db.metadata, *columns, schema=schema)
 
 
+class LegacyCode(db.TypeDecorator):
+    """Legacy zero-padded ``char(15)`` code, exposed as an integer.
+
+    The pre-existing ``VICLIENTI`` view stores its identifier as a
+    zero-padded ``char(15)`` (see ``openspec/specs/external_tables.md``),
+    while the application and the API contract treat customer ids as
+    integers (``REPAIRS.customer`` is an ``Integer`` column). The DBAPI
+    returns the character value unchanged, so a plain ``Integer`` mapping
+    leaks strings on SQL Server; this type converts the stored code to an
+    ``int`` on read and renders the zero-padded code on bind, keeping both
+    sides of the customer-name lookup the same type on every database.
+    """
+
+    impl = db.String(15)
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        return f"{int(value):015d}"
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        return int(value)
+
+
 _vehicle_table = _table(
     "TBALLESTIMENTI",
     db.Column("ID_INT", db.Integer, primary_key=True),
@@ -43,8 +70,8 @@ _vehicle_table = _table(
 
 _customer_table = _table(
     "VICLIENTI",
-    db.Column("ID", db.Integer, primary_key=True),
-    db.Column("N_NOMINATIVO", db.Integer),
+    db.Column("ID", LegacyCode, primary_key=True),
+    db.Column("N_NOMINATIVO", LegacyCode),
     db.Column("CLIENTE", db.String(100)),
     db.Column("NCLIENTE", db.String(10)),
     db.Column("VIA", db.String(100)),

@@ -296,6 +296,42 @@ class TestComputedFields:
         detail = client.get(f"/api/v1/repairs/{created['id']}").get_json()
         assert detail["customer_name"] == "ACME SRL"
 
+    def test_customer_name_resolved_from_legacy_string_code(self, client, db):
+        """A legacy zero-padded customer code still resolves its name.
+
+        The real ``VICLIENTI`` column is a ``char(15)``; the shim stores the raw
+        character code here so the lookup is exercised the way SQL Server does
+        it (the pre-fix integer mapping could not be reproduced otherwise).
+        """
+        from sqlalchemy import text
+
+        db.session.execute(
+            text(
+                "INSERT INTO DATIDBSTORICO.VICLIENTI (ID, N_NOMINATIVO, CLIENTE) "
+                "VALUES ('000000000000015', '000000000000015', 'LEGACY SRL')"
+            )
+        )
+        db.session.commit()
+
+        # The shim must keep the code as text, like the real char(15) column.
+        stored = db.session.execute(
+            text(
+                "SELECT ID FROM DATIDBSTORICO.VICLIENTI "
+                "WHERE CLIENTE = 'LEGACY SRL'"
+            )
+        ).scalar()
+        assert stored == "000000000000015"
+
+        created = _create_repair(client, customer=15).get_json()
+        assert created["customer_name"] == "LEGACY SRL"
+
+        listing = client.get("/api/v1/repairs").get_json()
+        row = next(item for item in listing if item["id"] == created["id"])
+        assert row["customer_name"] == "LEGACY SRL"
+
+        detail = client.get(f"/api/v1/repairs/{created['id']}").get_json()
+        assert detail["customer_name"] == "LEGACY SRL"
+
     def test_customer_name_null_when_id_has_no_record(self, client, db):
         # Insert directly: the API would reject an unknown customer (409).
         repair = Repairs(customer=999, vehicle=1)

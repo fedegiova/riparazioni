@@ -12,14 +12,17 @@
 --
 -- Prebaked rows (ids kept from the sample so seeded repairs reference
 -- recognizable values):
---   customer: id 9  ("PP.", Sassuolo)
+--   customer: id 9  ("PP.", Sassuolo), stored as the legacy zero-padded code
+--             '000000000000009' like the real VICLIENTI view (the model's
+--             LegacyCode type reads it back as the integer 9)
 --   vehicle:  id 12363 (IVECO 130E18, targa 417023)
 --   user:     id 21  ("LORENZA")
 
 INSERT INTO DATIDBSTORICO.VICLIENTI
     (ID, N_NOMINATIVO, CLIENTE, NCLIENTE, VIA, CAP, CITTA, PROV, TEL, FAX, CELL, EMAIL, NOTE)
 VALUES
-    (9, 9, 'PP.', '000000000000009', 'Via Montanara', '41049', 'SASSUOLO', 'MO',
+    ('000000000000009', '000000000000009', 'PP.', '000000000000009',
+     'Via Montanara', '41049', 'SASSUOLO', 'MO',
      '0536', '0536 PIZZER', NULL, NULL, NULL);
 
 INSERT INTO DATIDBSTORICO.TBALLESTIMENTI

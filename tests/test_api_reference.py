@@ -63,7 +63,9 @@ class TestCustomers:
         response = client.get("/api/v1/customers")
         assert response.status_code == 200
         payload = response.get_json()
-        assert any(item["id"] == customer_id for item in payload)
+        row = next(item for item in payload if item["id"] == customer_id)
+        assert isinstance(row["id"], int)
+        assert isinstance(row["n_nominativo"], int)
 
     def test_customer_detail(self, client, db):
         _, customer_id, _ = _seed_external(db)
@@ -71,7 +73,37 @@ class TestCustomers:
         assert response.status_code == 200
         payload = response.get_json()
         assert payload["id"] == customer_id
+        assert isinstance(payload["id"], int)
+        assert isinstance(payload["n_nominativo"], int)
         assert payload["cliente"] == "Beta S.r.l."
+
+    def test_customer_identifier_is_integer_for_legacy_code(self, client, db):
+        """A legacy zero-padded code is exposed as an integer identifier.
+
+        The real ``VICLIENTI`` column is a ``char(15)``; seeding the raw code
+        reproduces that storage so both the list and detail endpoints must
+        return integers.
+        """
+        from sqlalchemy import text
+
+        db.session.execute(
+            text(
+                "INSERT INTO DATIDBSTORICO.VICLIENTI (ID, N_NOMINATIVO, CLIENTE) "
+                "VALUES ('000000000000015', '000000000000015', 'LEGACY SRL')"
+            )
+        )
+        db.session.commit()
+
+        detail = client.get("/api/v1/customers/15").get_json()
+        assert detail["id"] == 15
+        assert isinstance(detail["id"], int)
+        assert isinstance(detail["n_nominativo"], int)
+
+        listing = client.get("/api/v1/customers").get_json()
+        row = next(item for item in listing if item["cliente"] == "LEGACY SRL")
+        assert row["id"] == 15
+        assert isinstance(row["id"], int)
+        assert isinstance(row["n_nominativo"], int)
 
     def test_unknown_customer_404(self, client, db):
         response = client.get("/api/v1/customers/123456")

@@ -101,6 +101,43 @@ def test_external_models_map_legacy_tables(app):
     assert AppUser.__table__.schema == "DATIDBSTORICO"
 
 
+def test_customer_legacy_code_reads_as_integer(app, db):
+    """A legacy zero-padded customer code reads back as an integer (task 1.1).
+
+    The real ``VICLIENTI`` column is a ``char(15)``; storing the raw code and
+    reading it through the ORM must yield the integer the rest of the app uses,
+    and an integer lookup must find that row.
+    """
+    from sqlalchemy import text
+
+    from app.models.external import LegacyCode
+
+    # The column is the legacy char(15) code type, not a plain integer column,
+    # and it converts the stored code to an integer on read.
+    assert isinstance(Customer.__table__.c.ID.type, LegacyCode)
+    assert (
+        Customer.__table__.c.ID.type.process_result_value("000000000000015", None)
+        == 15
+    )
+
+    # Insert the character code directly, bypassing the ORM bind processor, so
+    # the column holds exactly what SQL Server stores.
+    db.session.execute(
+        text(
+            "INSERT INTO DATIDBSTORICO.VICLIENTI (ID, N_NOMINATIVO, CLIENTE) "
+            "VALUES ('000000000000015', '000000000000015', 'LEGACY SRL')"
+        )
+    )
+    db.session.commit()
+
+    customer = db.session.get(Customer, 15)
+    assert customer is not None
+    assert customer.ID == 15
+    assert isinstance(customer.ID, int)
+    assert customer.N_NOMINATIVO == 15
+    assert customer.CLIENTE == "LEGACY SRL"
+
+
 def test_external_schema_uses_cross_database_prefix(app):
     """The legacy qualifier compiles to a 3-part MSSQL name when configured.
 
