@@ -43,3 +43,8 @@ dev-init:
 
 dev: dev-init
 	DEV_MODE=1 FLASK_DEBUG=1 $(FLASK) run
+
+deploy-frontend:
+	#cd frontend; npm run build
+	rsync -ar frontend/dist root@192.168.1.27:/opt/riparazioni/frontend
+	ssh root@192.168.1.27 chown -R riparazioni:riparazioni /opt/riparazioni/frontend/dist

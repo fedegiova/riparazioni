@@ -2,7 +2,9 @@
 
 from datetime import datetime
 
-from app.models import RepairPart, Repairs, RepairWorkLog
+from sqlalchemy.dialects import mssql
+
+from app.models import GasCylinder, RepairPart, Repairs, RepairWorkLog, ServicePart
 
 
 def _new_repair(db, refrigerator_id=None):
@@ -568,3 +570,39 @@ class TestServiceParts:
         db.session.commit()
         response = client.delete(f"/api/v1/service-parts/{created['id']}")
         assert response.status_code == 409
+
+
+class TestBooleanFilterPortability:
+    """Boolean flag filters must compile to portable `= 0`/`= 1`.
+
+    SQL Server rejects `IS 0`/`IS 1` for BIT columns (error 102), while SQLite
+    accepts it, so the SQLite-backed suite cannot catch the regression on its
+    own. Compile the list filters against the SQL Server dialect and assert
+    they never emit the invalid `IS <literal>` form.
+    """
+
+    @staticmethod
+    def _mssql_sql(statement):
+        return str(
+            statement.compile(
+                dialect=mssql.dialect(), compile_kwargs={"literal_binds": True}
+            )
+        )
+
+    def test_archived_filter_avoids_is_literal(self, db):
+        sql = self._mssql_sql(
+            db.select(GasCylinder).where(GasCylinder.archived == db.false())
+        )
+        assert "= 0" in sql
+        assert "IS 0" not in sql
+
+    def test_refrigerator_part_filter_avoids_is_literal(self, db):
+        for construct, expected in ((db.true(), "= 1"), (db.false(), "= 0")):
+            sql = self._mssql_sql(
+                db.select(ServicePart).where(
+                    ServicePart.is_refrigerator_part == construct
+                )
+            )
+            assert expected in sql
+            assert "IS 0" not in sql
+            assert "IS 1" not in sql

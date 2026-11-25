@@ -237,7 +237,9 @@ def list_gas_cylinders():
         raw_archived, "archived"
     )
     if not include_archived:
-        query = query.where(GasCylinder.archived.is_(False))
+        # `== db.false()` compiles to `= 0` on every dialect; `.is_(False)`
+        # compiles to `IS 0`, which SQL Server rejects for BIT columns.
+        query = query.where(GasCylinder.archived == db.false())
     items = db.session.execute(query).scalars().all()
     return jsonify([item.to_dict() for item in items])
 
@@ -496,10 +498,11 @@ def list_service_parts():
     query = db.select(ServicePart).order_by(ServicePart.id)
     raw_flag = request.args.get("is_refrigerator_part")
     if raw_flag is not None and raw_flag != "":
+        flag = _parse_bool_flag(raw_flag, "is_refrigerator_part")
+        # `== db.true()/db.false()` compiles to `= 1`/`= 0`; `.is_(...)`
+        # compiles to `IS 1`/`IS 0`, which SQL Server rejects for BIT columns.
         query = query.where(
-            ServicePart.is_refrigerator_part.is_(
-                _parse_bool_flag(raw_flag, "is_refrigerator_part")
-            )
+            ServicePart.is_refrigerator_part == (db.true() if flag else db.false())
         )
     items = db.session.execute(query).scalars().all()
     return jsonify([item.to_dict() for item in items])
