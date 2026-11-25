@@ -27,6 +27,15 @@ def _bool(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+# Qualifier for the read-only legacy reference objects (vehicles, customers,
+# users). The default, ``DATIDBSTORICO``, matches the SQLite database that dev
+# mode and the test suite ``ATTACH``. On SQL Server the legacy schema is nested
+# inside the ``AHR_GIOPLAST`` database, so the qualifier must be the
+# cross-database, 3-part form:
+# ``EXTERNAL_DB_SCHEMA=AHR_GIOPLAST.DATIDBSTORICO``.
+EXTERNAL_DB_SCHEMA = _env("EXTERNAL_DB_SCHEMA", "DATIDBSTORICO")
+
+
 class BaseConfig:
     """Settings shared by every environment."""
 
@@ -45,6 +54,9 @@ class BaseConfig:
 
     # Track modifications for the SQLAlchemy session.
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+
+    # Qualifier for the read-only legacy objects (see the module comment).
+    EXTERNAL_DB_SCHEMA = EXTERNAL_DB_SCHEMA
 
     # Writable runtime directories.
     BASE_DIR = _BASE_DIR

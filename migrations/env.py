@@ -5,6 +5,7 @@ from alembic import context
 from flask import current_app
 
 import app.models  # noqa: F401  (register model tables on the metadata for autogenerate)
+from app.config import EXTERNAL_DB_SCHEMA
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -51,12 +52,13 @@ def get_metadata():
 def include_object(object_, name, type_, reflected, compare_to):
     """Keep autogenerate (and `db upgrade`) away from the legacy schema.
 
-    Tables in the ``DATIDBSTORICO`` schema are owned by the external system
-    (see openspec/specs/external_tables.md). They already exist on the real
-    database and must never be created or dropped by this app's migrations,
-    so autogenerate ignores them entirely.
+    Tables in the legacy schema (``EXTERNAL_DB_SCHEMA``: ``DATIDBSTORICO``,
+    or ``AHR_GIOPLAST.DATIDBSTORICO`` on SQL Server) are owned by the
+    external system (see openspec/specs/external_tables.md). They already
+    exist on the real database and must never be created or dropped by this
+    app's migrations, so autogenerate ignores them entirely.
     """
-    return not (type_ == 'table' and getattr(object_, 'schema', None) == 'DATIDBSTORICO')
+    return not (type_ == 'table' and getattr(object_, 'schema', None) == EXTERNAL_DB_SCHEMA)
 
 
 def run_migrations_offline():

@@ -93,6 +93,15 @@ def setup_dev_mode(app) -> None:
     app context or engine access needed.
     """
     primary_path, external_path = resolve_dev_databases(app)
+    if "." in config_module.EXTERNAL_DB_SCHEMA:
+        # Dev mode attaches one SQLite file under a single schema name and the
+        # prebaked seed targets it unqualified; a cross-database 3-part
+        # qualifier is a SQL Server concern only.
+        raise RuntimeError(
+            "dev mode needs EXTERNAL_DB_SCHEMA to be the bare SQLite schema "
+            f"name (got {config_module.EXTERNAL_DB_SCHEMA!r}); unset it to use "
+            "'DATIDBSTORICO'"
+        )
     app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{primary_path}"
     app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
         # The Flask dev server is multithreaded; pooled SQLite connections
@@ -119,7 +128,7 @@ def install_dev_engine_hooks(app) -> None:
     attach_sql = (
         "ATTACH DATABASE "
         f"'{external_path.as_posix().replace(chr(39), chr(39) * 2)}' "
-        "AS DATIDBSTORICO"
+        f'AS "{config_module.EXTERNAL_DB_SCHEMA}"'
     )
 
     @event.listens_for(engine, "connect")
@@ -191,9 +200,15 @@ def init_dev_app(app, reset: bool = False, seed_path: str | None = None) -> None
     with engine.begin() as conn:
         if reset:
             for table in external_tables:
-                conn.exec_driver_sql(f'DROP TABLE IF EXISTS "DATIDBSTORICO".{table.name}')
+                conn.exec_driver_sql(
+                    f'DROP TABLE IF EXISTS "{config_module.EXTERNAL_DB_SCHEMA}".{table.name}'
+                )
         inspector = inspect(conn)
-        created = [t for t in external_tables if not inspector.has_table(t.name, schema="DATIDBSTORICO")]
+        created = [
+            t
+            for t in external_tables
+            if not inspector.has_table(t.name, schema=config_module.EXTERNAL_DB_SCHEMA)
+        ]
         db.metadata.create_all(conn, tables=external_tables, checkfirst=True)
 
     seeded = "skipped (tables not empty)"
@@ -266,7 +281,10 @@ def _migrate(engine, reset: bool) -> str:
 def _external_tables_empty(engine, tables) -> bool:
     with engine.connect() as conn:
         return all(
-            conn.exec_driver_sql(f'SELECT COUNT(*) FROM "DATIDBSTORICO".{t.name}').scalar() == 0
+            conn.exec_driver_sql(
+                f'SELECT COUNT(*) FROM "{config_module.EXTERNAL_DB_SCHEMA}".{t.name}'
+            ).scalar()
+            == 0
             for t in tables
         )
 

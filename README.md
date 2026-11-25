@@ -405,6 +405,7 @@ environment file):
 | `FLASK_DEBUG` | `0` | Debug mode |
 | `SECRET_KEY` | dev placeholder | Set a long random value in production |
 | `DATABASE_URL` | local MSSQL sample | `mssql+pyodbc://USER:PASS@HOST:1433/DB?driver=ODBC+Driver+18+for+SQL+Server` |
+| `EXTERNAL_DB_SCHEMA` | `DATIDBSTORICO` | Qualifier for the read-only legacy reference objects; on SQL Server set the 3-part name `AHR_GIOPLAST.DATIDBSTORICO` |
 | `BASE_DIR` | project root | Base directory for runtime files |
 | `UPLOAD_DIR` | `<BASE_DIR>/var/uploads` | Where the app writes uploaded files |
 | `LOG_DIR` | `<BASE_DIR>/var/log` | Where `app.log` is written |

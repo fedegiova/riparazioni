@@ -1,18 +1,24 @@
-"""Read-only models for pre-existing objects in the DATIDBSTORICO schema.
+"""Read-only models for pre-existing objects in the legacy reference schema.
 
 These objects are owned by the legacy system (see
 ``openspec/specs/external_tables.md``). They are mapped with explicit
 ``Table`` objects — no migration ever creates or alters them — and the API
 only exposes read endpoints. Column types follow the documented DDL; a
 smoke check against the live database must reconcile them (see task 1.5).
+
+The schema qualifier comes from ``EXTERNAL_DB_SCHEMA`` (see
+``app/config.py``): ``DATIDBSTORICO`` by default (dev mode / tests), or the
+cross-database 3-part form ``AHR_GIOPLAST.DATIDBSTORICO`` on SQL Server,
+where the legacy schema is nested inside the ``AHR_GIOPLAST`` database.
 """
 
+from app.config import EXTERNAL_DB_SCHEMA
 from app.extensions import db
 
 
-def _table(name: str, *columns) -> db.Table:
-    """Table in the DATIDBSTORICO schema, on the app metadata."""
-    return db.Table(name, db.metadata, *columns, schema="DATIDBSTORICO")
+def _table(name: str, *columns, schema: str = EXTERNAL_DB_SCHEMA) -> db.Table:
+    """Table in the legacy reference schema, on the app metadata."""
+    return db.Table(name, db.metadata, *columns, schema=schema)
 
 
 _vehicle_table = _table(

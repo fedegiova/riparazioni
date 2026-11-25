@@ -101,6 +101,40 @@ def test_external_models_map_legacy_tables(app):
     assert AppUser.__table__.schema == "DATIDBSTORICO"
 
 
+def test_external_schema_uses_cross_database_prefix(app):
+    """The legacy qualifier compiles to a 3-part MSSQL name when configured.
+
+    SQL Server hosts the legacy schema inside the ``AHR_GIOPLAST`` database,
+    so ``EXTERNAL_DB_SCHEMA=AHR_GIOPLAST.DATIDBSTORICO`` must render
+    ``[AHR_GIOPLAST].[DATIDBSTORICO].[<table>]`` in every statement.
+    """
+    from sqlalchemy.dialects import mssql
+    from sqlalchemy.schema import CreateTable
+
+    from app.config import EXTERNAL_DB_SCHEMA
+    from app.extensions import db
+    from app.models.external import _table
+
+    # Default (dev mode / tests): the bare SQLite-attached schema name.
+    assert EXTERNAL_DB_SCHEMA == "DATIDBSTORICO"
+    assert Vehicle.__table__.schema == EXTERNAL_DB_SCHEMA
+
+    # Cross-database qualifier: SQL Server gets the 3-part name.
+    table = _table(
+        "TBALLESTIMENTI",
+        db.Column("ID_INT", db.Integer, primary_key=True),
+        schema="AHR_GIOPLAST.DATIDBSTORICO",
+    )
+    try:
+        assert table.schema == "AHR_GIOPLAST.DATIDBSTORICO"
+        ddl = str(CreateTable(table).compile(dialect=mssql.dialect()))
+        assert "[AHR_GIOPLAST].[DATIDBSTORICO].[TBALLESTIMENTI]" in ddl
+    finally:
+        # Do not leak this extra table into the shared metadata (the db
+        # fixture calls create_all on it).
+        db.metadata.remove(table)
+
+
 def test_app_user_serializer_never_exposes_password(app):
     user = AppUser(ID_INT=1, ID="000000000000001", NAME="Test User", PASSWORD="secret")
     data = user.to_dict()

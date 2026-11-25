@@ -71,7 +71,8 @@ The system SHALL allow archiving a gas cylinder whose remaining weight is
 below one quarter of its full weight, and restoring an archived cylinder.
 Archiving and restoring SHALL leave the remaining weight unchanged. Listing
 SHALL hide archived cylinders by default and include them when the archived
-filter is requested.
+filter is requested. The archived filter SHALL return the same records on every
+supported database (SQLite and SQL Server).
 
 #### Scenario: Archive a cylinder below one quarter
 - **WHEN** a client archives a cylinder whose remaining weight is below one quarter of its full weight
@@ -88,6 +89,10 @@ filter is requested.
 #### Scenario: Archived cylinders are hidden by default
 - **WHEN** a client GETs /api/v1/gas-cylinders
 - **THEN** the response omits archived cylinders; a request with the archived filter includes them
+
+#### Scenario: Archived filter is database-portable
+- **WHEN** a client GETs /api/v1/gas-cylinders on SQL Server
+- **THEN** the request succeeds with HTTP 200 and the response omits archived cylinders, without a database syntax error
 
 ### Requirement: Record gas cylinder refills
 The system SHALL record a refill for a gas cylinder, storing its date and
@@ -187,7 +192,8 @@ balance to the full weight.
 The system SHALL allow creating, listing, retrieving, updating, and
 deleting service parts (name, supplier, kind, price,
 is-refrigerator-part flag, notes). The list SHALL be
-filterable by the is-refrigerator-part flag.
+filterable by the is-refrigerator-part flag. The filter SHALL return the same
+records on every supported database (SQLite and SQL Server).
 
 #### Scenario: Create a part
 - **WHEN** a client POSTs to /api/v1/service-parts with name, price and kind
@@ -196,6 +202,10 @@ filterable by the is-refrigerator-part flag.
 #### Scenario: Filter parts by refrigerator flag
 - **WHEN** a client GETs /api/v1/service-parts?is_refrigerator_part=true
 - **THEN** the response contains only refrigerator parts
+
+#### Scenario: Filter parts is database-portable
+- **WHEN** a client GETs /api/v1/service-parts?is_refrigerator_part=true on SQL Server
+- **THEN** the request succeeds with HTTP 200 and the response contains only refrigerator parts, without a database syntax error
 
 #### Scenario: Delete a part used by a repair
 - **WHEN** a client DELETEs a part associated with an existing repair
